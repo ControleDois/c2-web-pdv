@@ -103,6 +103,12 @@ export interface FoodTableDeliveryOrder {
   status: DeliveryOrderStatus
   delivery_fee: number
   total: number
+  /** 'own' (delivery da loja) | 'ifood' */
+  origin?: string
+}
+
+export function isIfoodOrder(table: FoodTable): boolean {
+  return table.delivery_order?.origin === 'ifood'
 }
 
 export interface FoodTable extends FoodBaseLocal {

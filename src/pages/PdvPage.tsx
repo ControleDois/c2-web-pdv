@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ProductSyncPage } from './ProductSyncPage'
 import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
+import { Sidebar } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { updateDeliveryOrderStatus } from '../lib/foodApi'
 import { newLocalId } from '../lib/foodTypes'
+import { countProducts } from '../lib/db'
 import type { FoodTable } from '../lib/foodTypes'
 import type { AuthCompany, AuthSession } from '../lib/auth'
 
@@ -14,15 +16,40 @@ interface PdvPageProps {
   company: AuthCompany
 }
 
+type SyncStatus = 'checking' | 'needs-sync' | 'ready'
+type Screen = 'tables' | 'settings'
+
 export function PdvPage({ session, company }: PdvPageProps) {
-  const [ready, setReady] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('checking')
+  const [screen, setScreen] = useState<Screen>('tables')
   const { tables, saveTable, setSelectedTableId, reloadFromDb } = useFoodTables(session, company)
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  if (!ready) {
-    return <ProductSyncPage session={session} company={company} onReady={() => setReady(true)} />
+  useEffect(() => {
+    let cancelled = false
+    countProducts().then((count) => {
+      if (!cancelled) setSyncStatus(count > 0 ? 'ready' : 'needs-sync')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (syncStatus === 'checking') {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--blue-300)] border-t-[var(--blue-500)]" />
+      </div>
+    )
+  }
+
+  // Só força a sincronização quando nunca rodou antes (0 produtos salvos) -
+  // depois disso, atualizar o cardápio é uma ação em Configurações, não uma
+  // trava toda vez que o PDV abre.
+  if (syncStatus === 'needs-sync') {
+    return <ProductSyncPage session={session} company={company} onReady={() => setSyncStatus('ready')} />
   }
 
   const selectedTable = tables.find((table) => table.id === selectedId) ?? null
@@ -106,26 +133,42 @@ export function PdvPage({ session, company }: PdvPageProps) {
     }
   }
 
-  if (!selectedTable) {
+  if (selectedTable) {
     return (
-      <TableGrid
-        tables={tables}
-        search={tableSearch}
-        onSearchChange={setTableSearch}
-        onSubmit={handleTableInputSubmit}
-        onSelect={enterTable}
+      <TableDetail
+        table={selectedTable}
+        authorId={myPerson?.id ?? ''}
+        authorName={myPerson?.name ?? ''}
+        onBack={exitTable}
+        onSave={(updated) => saveTable(updated)}
+        onAdvanceDeliveryStatus={handleAdvanceDeliveryStatus}
       />
     )
   }
 
   return (
-    <TableDetail
-      table={selectedTable}
-      authorId={myPerson?.id ?? ''}
-      authorName={myPerson?.name ?? ''}
-      onBack={exitTable}
-      onSave={(updated) => saveTable(updated)}
-      onAdvanceDeliveryStatus={handleAdvanceDeliveryStatus}
-    />
+    <div className="flex h-full">
+      <Sidebar screen={screen} onNavigate={setScreen} />
+      <div className="min-h-0 min-w-0 flex-1">
+        {screen === 'settings' ? (
+          <ProductSyncPage
+            session={session}
+            company={company}
+            embedded
+            onBack={() => setScreen('tables')}
+            onReady={() => setScreen('tables')}
+          />
+        ) : (
+          <TableGrid
+            tables={tables}
+            search={tableSearch}
+            onSearchChange={setTableSearch}
+            onSubmit={handleTableInputSubmit}
+            onSelect={enterTable}
+            onOpenSettings={() => setScreen('settings')}
+          />
+        )}
+      </div>
+    </div>
   )
 }

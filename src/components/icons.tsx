@@ -521,3 +521,21 @@ export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
+
+export function TableIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" {...props}>
+      <rect x="2.5" y="6" width="15" height="3" rx="1" />
+      <path d="M4.5 9v6M15.5 9v6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function BagIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" {...props}>
+      <path d="M5 7h10l-.8 9a1.6 1.6 0 0 1-1.6 1.5H7.4A1.6 1.6 0 0 1 5.8 16z" strokeLinejoin="round" />
+      <path d="M7 7V5.5a3 3 0 0 1 6 0V7" strokeLinecap="round" />
+    </svg>
+  )
+}
