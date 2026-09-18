@@ -37,6 +37,8 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [onlyMode, setOnlyMode] = useState(Boolean(config?.quick_sale_only_mode))
   const [askPreview, setAskPreview] = useState(Boolean(config?.quick_sale_ask_print_preview))
   const [printModel, setPrintModel] = useState<'thermal' | 'a4'>(config?.quick_sale_print_model ?? 'thermal')
+  const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
+  const [askPrice, setAskPrice] = useState(Boolean(config?.quick_sale_ask_price))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -55,6 +57,8 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_only_mode: enabled ? onlyMode : false,
         quick_sale_ask_print_preview: askPreview,
         quick_sale_print_model: printModel,
+        quick_sale_ask_quantity: askQuantity,
+        quick_sale_ask_price: askPrice,
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -107,6 +111,27 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             <Toggle checked={onlyMode} onChange={setOnlyMode} />
           </div>
         )}
+
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div>
+            <p className="text-[13.5px] font-bold text-[var(--ink)]">Perguntar a quantidade</p>
+            <p className="text-[11.5px] text-[var(--ink-soft)]">
+              Depois de bipar o produto, pede pra digitar a quantidade (padrão: 1)
+            </p>
+          </div>
+          <Toggle checked={askQuantity} onChange={setAskQuantity} />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div>
+            <p className="text-[13.5px] font-bold text-[var(--ink)]">Permitir alterar o preço na venda</p>
+            <p className="text-[11.5px] text-[var(--ink-soft)]">
+              Pede pra confirmar/digitar o preço de cada produto antes de adicionar — útil pra quem
+              define o preço na hora
+            </p>
+          </div>
+          <Toggle checked={askPrice} onChange={setAskPrice} />
+        </div>
 
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div>

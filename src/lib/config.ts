@@ -6,6 +6,8 @@ export interface QuickSaleConfigPayload {
   quick_sale_only_mode?: boolean
   quick_sale_ask_print_preview?: boolean
   quick_sale_print_model?: 'thermal' | 'a4'
+  quick_sale_ask_quantity?: boolean
+  quick_sale_ask_price?: boolean
 }
 
 export function updateConfig(token: string, companyId: string, configId: string, payload: QuickSaleConfigPayload) {

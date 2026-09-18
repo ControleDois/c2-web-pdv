@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { filterProductBy, type LocalProduct } from '../lib/db'
 import { searchPeople, type PersonRecord } from '../lib/people'
+import { searchProducts, totalStock, type ProductRecord } from '../lib/products'
 import { createSale, type SaleProductPayload, type SalePlotPayload } from '../lib/sales'
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
-import { ChevronLeftIcon, SearchIcon, TrashIcon, PrinterIcon, AlertTriangleIcon } from '../components/icons'
+import {
+  ChevronLeftIcon,
+  SearchIcon,
+  TrashIcon,
+  PrinterIcon,
+  AlertTriangleIcon,
+  CoinIcon,
+  BoxIcon,
+  TagIcon,
+  UserIcon,
+} from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
 interface QuickSalePageProps {
@@ -31,6 +42,7 @@ interface PaymentLine {
 }
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
+type Step = 'scan' | 'quantity' | 'price'
 type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-preview' | 'receipt'
 
 const PAYMENT_METHODS = [
@@ -59,10 +71,20 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
 
   const [modal, setModal] = useState<Modal>(null)
 
-  const [productQuery, setProductQuery] = useState('')
-  const [productResults, setProductResults] = useState<LocalProduct[]>([])
-  const [productIndex, setProductIndex] = useState(0)
-  const productInputRef = useRef<HTMLInputElement>(null)
+  // Fluxo de bipagem/digitação: um único campo sempre focado, que muda de
+  // papel conforme o passo (buscar produto -> quantidade -> preço).
+  const [step, setStep] = useState<Step>('scan')
+  const [scanQuery, setScanQuery] = useState('')
+  const [scanPreview, setScanPreview] = useState<LocalProduct | null>(null)
+  const [pendingProduct, setPendingProduct] = useState<LocalProduct | null>(null)
+  const [quantityInput, setQuantityInput] = useState('1')
+  const [priceInput, setPriceInput] = useState('')
+  const scanInputRef = useRef<HTMLInputElement>(null)
+
+  const [productModalQuery, setProductModalQuery] = useState('')
+  const [productModalResults, setProductModalResults] = useState<ProductRecord[]>([])
+  const [productModalIndex, setProductModalIndex] = useState(0)
+  const [productModalLoading, setProductModalLoading] = useState(false)
 
   const [clientQuery, setClientQuery] = useState('')
   const [clientResults, setClientResults] = useState<PersonRecord[]>([])
@@ -81,9 +103,6 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0)
   const remaining = Math.max(0, total - paidTotal)
 
-  // Checa se o caixa está aberto antes de liberar a venda rápida (o Angular
-  // não checa isso na tela, só descobre quando o backend rejeita a venda —
-  // aqui preferimos travar antes, evitando montar o carrinho todo à toa).
   useEffect(() => {
     let cancelled = false
     fetchCashRegisterStatus(session.token.token, company.id)
@@ -105,6 +124,14 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.id])
 
+  // Mantém o campo de bipagem sempre em foco durante a venda ativa, exceto
+  // quando algum modal está aberto (aí o foco é do modal).
+  useEffect(() => {
+    if (phase === 'active' && modal === null) {
+      scanInputRef.current?.focus()
+    }
+  }, [phase, modal, step])
+
   function resetSale() {
     setCart([])
     setSelectedIndex(0)
@@ -113,6 +140,16 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setPaymentAmountInput('')
     setSubmitError(null)
     setReceipt(null)
+    resetScan()
+  }
+
+  function resetScan() {
+    setStep('scan')
+    setScanQuery('')
+    setScanPreview(null)
+    setPendingProduct(null)
+    setQuantityInput('1')
+    setPriceInput('')
   }
 
   function startSale() {
@@ -125,12 +162,16 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setPhase('idle')
   }
 
-  function addProductToCart(product: LocalProduct) {
+  function addToCart(product: LocalProduct, quantity: number, unitValue: number) {
     setCart((prev) => {
       const existingIndex = prev.findIndex((item) => item.productId === product.id)
       if (existingIndex >= 0) {
         const next = [...prev]
-        next[existingIndex] = { ...next[existingIndex], quantity: next[existingIndex].quantity + 1 }
+        next[existingIndex] = {
+          ...next[existingIndex],
+          quantity: next[existingIndex].quantity + quantity,
+          unitValue,
+        }
         setSelectedIndex(existingIndex)
         return next
       }
@@ -141,37 +182,165 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
           productId: product.id,
           code: product.code !== undefined ? String(product.code) : undefined,
           name: product.name,
-          unitValue: Number(product.sale_value || 0),
-          quantity: 1,
+          unitValue,
+          quantity,
         },
       ]
     })
   }
 
-  function openProductModal() {
-    setProductQuery('')
-    setProductResults([])
-    setProductIndex(0)
-    setModal('product')
-    setTimeout(() => productInputRef.current?.focus(), 0)
-  }
-
-  async function handleProductQueryChange(value: string) {
-    setProductQuery(value)
-    setProductIndex(0)
+  // Busca ao vivo (offline, mesmo algoritmo do Angular) a cada tecla digitada
+  // - mostra o produto encontrado antes mesmo de apertar Enter.
+  async function handleScanChange(value: string) {
+    setScanQuery(value)
     if (!value.trim()) {
-      setProductResults([])
+      setScanPreview(null)
       return
     }
     const results = await filterProductBy(value.trim())
-    setProductResults(results)
+    setScanPreview(results[0] ?? null)
   }
 
-  function confirmProductSelection() {
-    const product = productResults[productIndex]
-    if (!product) return
-    addProductToCart(product)
+  function handleScanEnter() {
+    if (!scanQuery.trim()) {
+      if (cart.length > 0) openPaymentModal()
+      return
+    }
+    if (!scanPreview) return
+
+    const product = scanPreview
+    setPendingProduct(product)
+    setScanQuery('')
+    setScanPreview(null)
+
+    if (config?.quick_sale_ask_quantity) {
+      setQuantityInput('1')
+      setStep('quantity')
+      return
+    }
+    advanceToPriceOrAdd(product, 1)
+  }
+
+  function advanceToPriceOrAdd(product: LocalProduct, quantity: number) {
+    if (config?.quick_sale_ask_price) {
+      setPriceInput(String(Number(product.sale_value || 0).toFixed(2)).replace('.', ','))
+      setStep('price')
+      return
+    }
+    addToCart(product, quantity, Number(product.sale_value || 0))
+    resetScan()
+  }
+
+  function handleQuantityEnter() {
+    if (!pendingProduct) return
+    const quantity = Math.max(1, Math.round(parseAmountInput(quantityInput)) || 1)
+    advanceToPriceOrAdd(pendingProduct, quantity)
+  }
+
+  function handlePriceEnter() {
+    if (!pendingProduct) return
+    const quantity = Math.max(1, Math.round(parseAmountInput(quantityInput)) || 1)
+    const price = parseAmountInput(priceInput) || Number(pendingProduct.sale_value || 0)
+    addToCart(pendingProduct, quantity, price)
+    resetScan()
+  }
+
+  function handleScanKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (step === 'scan') handleScanEnter()
+      else if (step === 'quantity') handleQuantityEnter()
+      else if (step === 'price') handlePriceEnter()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      if (step !== 'scan') resetScan()
+      else exitSale()
+      return
+    }
+    if (event.key === 'F2') {
+      event.preventDefault()
+      openProductModal()
+      return
+    }
+    if (event.key === 'F3') {
+      event.preventDefault()
+      openClientModal()
+      return
+    }
+    if (event.key === 'F4') {
+      event.preventDefault()
+      openPaymentModal()
+      return
+    }
+    if (step !== 'scan' || scanQuery !== '') return
+
+    if (event.key === 'ArrowDown' && cart.length > 0) {
+      event.preventDefault()
+      setSelectedIndex((prev) => Math.min(prev + 1, cart.length - 1))
+    } else if (event.key === 'ArrowUp' && cart.length > 0) {
+      event.preventDefault()
+      setSelectedIndex((prev) => Math.max(prev - 1, 0))
+    } else if (event.key === '+' && cart.length > 0) {
+      event.preventDefault()
+      setCart((prev) =>
+        prev.map((item, index) => (index === selectedIndex ? { ...item, quantity: item.quantity + 1 } : item))
+      )
+    } else if (event.key === '-' && cart.length > 0) {
+      event.preventDefault()
+      setCart((prev) =>
+        prev.map((item, index) =>
+          index === selectedIndex ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item
+        )
+      )
+    } else if (event.key === 'Delete' && cart.length > 0) {
+      event.preventDefault()
+      setModal('remove-confirm')
+    }
+  }
+
+  function openProductModal() {
+    setProductModalQuery('')
+    setProductModalResults([])
+    setProductModalIndex(0)
+    setModal('product')
+  }
+
+  async function handleProductModalQueryChange(value: string) {
+    setProductModalQuery(value)
+    setProductModalIndex(0)
+    if (!value.trim()) {
+      setProductModalResults([])
+      return
+    }
+    setProductModalLoading(true)
+    try {
+      const results = await searchProducts(session.token.token, company.id, value.trim())
+      setProductModalResults(results)
+    } catch {
+      setProductModalResults([])
+    } finally {
+      setProductModalLoading(false)
+    }
+  }
+
+  function selectProductFromModal(product: ProductRecord) {
     setModal(null)
+    const localProduct: LocalProduct = {
+      id: product.id,
+      code: product.code,
+      barcode: product.barcode,
+      name: product.name,
+      sale_value: product.sale_value,
+    }
+    setPendingProduct(localProduct)
+    if (config?.quick_sale_ask_quantity) {
+      setQuantityInput('1')
+      setStep('quantity')
+    } else {
+      advanceToPriceOrAdd(localProduct, 1)
+    }
   }
 
   function openClientModal() {
@@ -299,61 +468,20 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     window.print()
   }
 
-  // Atalhos de tela cheia (F2/F3/F4/setas/Delete/Escape) - só ativos quando
-  // nenhum modal está aberto, pra não brigar com o input de busca/pagamento
-  // de cada modal (que trata suas próprias teclas localmente).
+  // Só o Enter da tela "Disponível" precisa de um listener global - todo o
+  // resto do fluxo ativo é tratado no próprio campo de bipagem (sempre
+  // focado), então não compete com os inputs dos modais.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (phase === 'idle' && modal === null) {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          startSale()
-        }
-        return
-      }
-
-      if (phase !== 'active' || modal !== null) return
-
-      if (event.key === 'F2') {
+      if (phase === 'idle' && modal === null && event.key === 'Enter') {
         event.preventDefault()
-        openProductModal()
-      } else if (event.key === 'F3') {
-        event.preventDefault()
-        openClientModal()
-      } else if (event.key === 'F4') {
-        event.preventDefault()
-        openPaymentModal()
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        exitSale()
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setSelectedIndex((prev) => Math.min(prev + 1, cart.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setSelectedIndex((prev) => Math.max(prev - 1, 0))
-      } else if (event.key === '+') {
-        event.preventDefault()
-        setCart((prev) =>
-          prev.map((item, index) => (index === selectedIndex ? { ...item, quantity: item.quantity + 1 } : item))
-        )
-      } else if (event.key === '-') {
-        event.preventDefault()
-        setCart((prev) =>
-          prev.map((item, index) =>
-            index === selectedIndex ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item
-          )
-        )
-      } else if (event.key === 'Delete' && cart.length > 0) {
-        event.preventDefault()
-        setModal('remove-confirm')
+        startSale()
       }
     }
-
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, modal, cart.length, selectedIndex])
+  }, [phase, modal])
 
   if (phase === 'checking') {
     return (
@@ -366,8 +494,8 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   if (phase === 'blocked') {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--red-100)] text-[var(--red-500)]">
-          <AlertTriangleIcon className="h-6 w-6" />
+        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--red-100)] text-[var(--red-500)]">
+          <AlertTriangleIcon className="h-7 w-7" />
         </span>
         <p className="max-w-sm text-[15px] font-semibold text-[var(--ink)]">{blockedMessage}</p>
         <button
@@ -383,7 +511,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
 
   if (phase === 'idle') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="relative flex h-full flex-col items-center justify-center gap-6 bg-[var(--page)] p-6 text-center">
         <button
           type="button"
           onClick={onExit}
@@ -391,13 +519,39 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
-        <p className="text-[26px] font-bold text-[var(--ink)]">Disponível</p>
-        <p className="text-[14px] text-[var(--ink-soft)]">Pressione Enter para iniciar a venda rápida</p>
+
+        <div className="flex flex-col items-center gap-6 rounded-[32px] border-2 border-[var(--blue-200)] bg-[var(--surface)] px-12 py-16 shadow-[var(--card-shadow)] sm:px-24">
+          <div className="relative flex h-28 w-28 items-center justify-center">
+            <span className="absolute inset-0 animate-pulse rounded-full bg-[var(--blue-100)]" />
+            <span className="relative flex h-24 w-24 items-center justify-center rounded-full bg-[var(--blue-500)] text-white shadow-lg">
+              <CoinIcon className="h-11 w-11" />
+            </span>
+          </div>
+          <div>
+            <p className="text-[34px] font-bold tracking-tight text-[var(--ink)]">Disponível</p>
+            <p className="mt-2 text-[15px] text-[var(--ink-soft)]">Venda Rápida pronta pra começar</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-2xl bg-[var(--blue-100)] px-5 py-3">
+            <kbd className="rounded-lg bg-[var(--surface)] px-3 py-1.5 text-[15px] font-bold text-[var(--blue-700)] shadow">
+              Enter
+            </kbd>
+            <span className="text-[13.5px] font-semibold text-[var(--blue-700)]">para iniciar a venda</span>
+          </div>
+        </div>
       </div>
     )
   }
 
   // phase === 'active'
+  const stepIcon = step === 'quantity' ? BoxIcon : step === 'price' ? TagIcon : SearchIcon
+  const StepIcon = stepIcon
+  const stepLabel =
+    step === 'quantity'
+      ? 'Digite a quantidade'
+      : step === 'price'
+        ? 'Digite o preço'
+        : 'Busque ou bipe o código do produto'
+
   return (
     <div className="relative flex h-full flex-col">
       <div className="flex flex-none items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3">
@@ -423,11 +577,67 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
         </div>
       </div>
 
+      <div className="flex-none border-b border-[var(--border)] bg-[var(--surface)] p-4">
+        <div className="flex items-center gap-2 px-1 pb-2">
+          <StepIcon
+            className={`h-4 w-4 ${step === 'scan' ? 'text-[var(--ink-soft)]' : 'text-[var(--blue-700)]'}`}
+          />
+          <p
+            className={`text-[12.5px] font-bold ${step === 'scan' ? 'text-[var(--ink-soft)]' : 'text-[var(--blue-700)]'}`}
+          >
+            {stepLabel}
+            {pendingProduct && step !== 'scan' && <span className="font-normal"> · {pendingProduct.name}</span>}
+          </p>
+        </div>
+
+        <input
+          ref={scanInputRef}
+          type="text"
+          inputMode={step === 'scan' ? 'text' : 'decimal'}
+          autoFocus
+          value={step === 'scan' ? scanQuery : step === 'quantity' ? quantityInput : priceInput}
+          onChange={(event) => {
+            if (step === 'scan') handleScanChange(event.target.value)
+            else if (step === 'quantity') setQuantityInput(event.target.value.replace(/[^\d,]/g, ''))
+            else setPriceInput(event.target.value.replace(/[^\d,]/g, ''))
+          }}
+          onKeyDown={handleScanKeyDown}
+          placeholder={
+            step === 'scan' ? 'Nome, código ou código de barras…' : step === 'quantity' ? '1' : '0,00'
+          }
+          className={`w-full rounded-2xl border-2 px-4 py-3.5 text-[20px] font-bold text-[var(--ink)] transition focus:outline-none ${
+            step === 'scan'
+              ? 'border-[var(--border)] bg-[var(--page)] focus:border-[var(--blue-300)]'
+              : 'border-[var(--blue-300)] bg-[var(--blue-100)] text-center'
+          }`}
+        />
+
+        {step === 'scan' && scanPreview && (
+          <div className="mt-2.5 flex items-center gap-3 rounded-xl bg-[var(--green-100)] px-3.5 py-2.5">
+            <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-[var(--surface)] text-[var(--green-600)]">
+              <BoxIcon className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13.5px] font-bold text-[var(--ink)]">{scanPreview.name}</p>
+              <p className="text-[11.5px] text-[var(--ink-soft)]">
+                {scanPreview.code ? `Cód. ${scanPreview.code}` : scanPreview.barcode || ''}
+              </p>
+            </div>
+            <p className="flex-none text-[16px] font-bold text-[var(--green-600)]">
+              {formatCurrency(Number(scanPreview.sale_value || 0))}
+            </p>
+          </div>
+        )}
+        {step === 'scan' && scanQuery.trim() && !scanPreview && (
+          <p className="mt-2.5 px-1 text-[12.5px] text-[var(--muted)]">Nenhum produto encontrado.</p>
+        )}
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {cart.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-[var(--ink-soft)]">
             <p className="text-[14px] font-semibold">Carrinho vazio</p>
-            <p className="text-[12.5px]">Pressione F2 pra buscar um produto</p>
+            <p className="text-[12.5px]">Bipe um produto pra começar</p>
           </div>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -461,14 +671,14 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
           onClick={openProductModal}
           className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-2 text-[12.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
         >
-          <SearchIcon className="h-3.5 w-3.5" /> F2 Produto
+          <SearchIcon className="h-3.5 w-3.5" /> F2 Consultar produtos
         </button>
         <button
           type="button"
           onClick={openClientModal}
-          className="rounded-xl border border-[var(--border)] px-3 py-2 text-[12.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+          className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-2 text-[12.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
         >
-          F3 Cliente
+          <UserIcon className="h-3.5 w-3.5" /> F3 Cliente
         </button>
         {cart.length > 0 && (
           <button
@@ -490,53 +700,83 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
       </div>
 
       {modal === 'product' && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-24" onClick={() => setModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-16" onClick={() => setModal(null)}>
           <div
-            className="w-full max-w-lg rounded-2xl bg-[var(--surface)] p-4 shadow-xl"
+            className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              ref={productInputRef}
-              type="text"
-              value={productQuery}
-              placeholder="Buscar por código, nome ou código de barras"
-              onChange={(e) => handleProductQueryChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setModal(null)
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  confirmProductSelection()
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setProductIndex((prev) => Math.min(prev + 1, productResults.length - 1))
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setProductIndex((prev) => Math.max(prev - 1, 0))
-                }
-              }}
-              className="w-full rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
-            />
-            <div className="mt-2 max-h-72 overflow-y-auto">
-              {productResults.map((product, index) => (
-                <button
-                  type="button"
-                  key={product.id}
-                  onClick={() => {
-                    addProductToCart(product)
+            <div className="flex items-center gap-3 border-b border-[var(--border)] p-4">
+              <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)]">
+                <BoxIcon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[14.5px] font-bold text-[var(--ink)]">Consultar produtos</p>
+                <p className="text-[11.5px] text-[var(--ink-soft)]">Busque por nome, código ou código de barras</p>
+              </div>
+              <input
+                autoFocus
+                type="text"
+                value={productModalQuery}
+                placeholder="Digite pra buscar…"
+                onChange={(e) => handleProductModalQueryChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
                     setModal(null)
-                  }}
-                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] ${
-                    index === productIndex ? 'bg-[var(--blue-100)] text-[var(--blue-700)]' : 'text-[var(--ink)]'
-                  }`}
-                >
-                  <span className="truncate">{product.name}</span>
-                  <span className="flex-none font-semibold">{formatCurrency(Number(product.sale_value || 0))}</span>
-                </button>
-              ))}
-              {productQuery && productResults.length === 0 && (
-                <p className="px-3 py-2 text-[13px] text-[var(--muted)]">Nenhum produto encontrado.</p>
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const product = productModalResults[productModalIndex]
+                    if (product) selectProductFromModal(product)
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setProductModalIndex((prev) => Math.min(prev + 1, productModalResults.length - 1))
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setProductModalIndex((prev) => Math.max(prev - 1, 0))
+                  }
+                }}
+                className="w-56 flex-none rounded-xl bg-[var(--page)] px-3.5 py-2 text-[13.5px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {productModalLoading ? (
+                <p className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">Buscando…</p>
+              ) : productModalResults.length === 0 ? (
+                <p className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
+                  {productModalQuery ? 'Nenhum produto encontrado.' : 'Digite pra buscar um produto.'}
+                </p>
+              ) : (
+                <table className="w-full border-collapse text-[13px]">
+                  <thead className="sticky top-0 bg-[var(--page)]">
+                    <tr className="text-left text-[10.5px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      <th className="py-2 pl-4 pr-2">Descrição</th>
+                      <th className="px-2 py-2 text-right">Valor</th>
+                      <th className="px-2 py-2 pr-4 text-right">Estoque</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productModalResults.map((product, index) => (
+                      <tr
+                        key={product.id}
+                        onClick={() => selectProductFromModal(product)}
+                        className={`cursor-pointer border-t border-[var(--border)] transition ${
+                          index === productModalIndex ? 'bg-[var(--blue-100)]' : 'hover:bg-[var(--page)]'
+                        }`}
+                      >
+                        <td className="py-2.5 pl-4 pr-2">
+                          <p className="font-semibold text-[var(--ink)]">{product.name}</p>
+                          <p className="text-[11px] text-[var(--muted)]">
+                            {product.code ? `Cód. ${product.code}` : product.barcode || '—'}
+                          </p>
+                        </td>
+                        <td className="px-2 py-2.5 text-right font-semibold text-[var(--ink)]">
+                          {formatCurrency(Number(product.sale_value || 0))}
+                        </td>
+                        <td className="px-2 py-2.5 pr-4 text-right text-[var(--ink-soft)]">{totalStock(product)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -544,54 +784,79 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
       )}
 
       {modal === 'client' && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-24" onClick={() => setModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-16" onClick={() => setModal(null)}>
           <div
-            className="w-full max-w-lg rounded-2xl bg-[var(--surface)] p-4 shadow-xl"
+            className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              autoFocus
-              type="text"
-              value={clientQuery}
-              placeholder="Buscar cliente por nome ou documento"
-              onChange={(e) => handleClientQueryChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setModal(null)
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  const person = clientResults[clientIndex]
-                  if (person) {
-                    setClient(person)
+            <div className="flex items-center gap-3 border-b border-[var(--border)] p-4">
+              <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)]">
+                <UserIcon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[14.5px] font-bold text-[var(--ink)]">Consultar clientes</p>
+                <p className="text-[11.5px] text-[var(--ink-soft)]">Busque por nome ou documento</p>
+              </div>
+              <input
+                autoFocus
+                type="text"
+                value={clientQuery}
+                placeholder="Digite pra buscar…"
+                onChange={(e) => handleClientQueryChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
                     setModal(null)
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const person = clientResults[clientIndex]
+                    if (person) {
+                      setClient(person)
+                      setModal(null)
+                    }
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setClientIndex((prev) => Math.min(prev + 1, clientResults.length - 1))
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setClientIndex((prev) => Math.max(prev - 1, 0))
                   }
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setClientIndex((prev) => Math.min(prev + 1, clientResults.length - 1))
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setClientIndex((prev) => Math.max(prev - 1, 0))
-                }
-              }}
-              className="w-full rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
-            />
-            <div className="mt-2 max-h-72 overflow-y-auto">
-              {clientResults.map((person, index) => (
-                <button
-                  type="button"
-                  key={person.id}
-                  onClick={() => {
-                    setClient(person)
-                    setModal(null)
-                  }}
-                  className={`block w-full truncate rounded-lg px-3 py-2 text-left text-[13px] ${
-                    index === clientIndex ? 'bg-[var(--blue-100)] text-[var(--blue-700)]' : 'text-[var(--ink)]'
-                  }`}
-                >
-                  {person.name}
-                </button>
-              ))}
+                }}
+                className="w-56 flex-none rounded-xl bg-[var(--page)] px-3.5 py-2 text-[13.5px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {clientResults.length === 0 ? (
+                <p className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
+                  {clientQuery ? 'Nenhum cliente encontrado.' : 'Digite pra buscar um cliente.'}
+                </p>
+              ) : (
+                <table className="w-full border-collapse text-[13px]">
+                  <thead className="sticky top-0 bg-[var(--page)]">
+                    <tr className="text-left text-[10.5px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      <th className="py-2 pl-4 pr-2">Nome</th>
+                      <th className="px-2 py-2 pr-4">Documento</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientResults.map((person, index) => (
+                      <tr
+                        key={person.id}
+                        onClick={() => {
+                          setClient(person)
+                          setModal(null)
+                        }}
+                        className={`cursor-pointer border-t border-[var(--border)] transition ${
+                          index === clientIndex ? 'bg-[var(--blue-100)]' : 'hover:bg-[var(--page)]'
+                        }`}
+                      >
+                        <td className="py-2.5 pl-4 pr-2 font-semibold text-[var(--ink)]">{person.name}</td>
+                        <td className="px-2 py-2.5 pr-4 text-[var(--ink-soft)]">{person.document || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>

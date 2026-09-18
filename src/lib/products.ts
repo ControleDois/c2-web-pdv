@@ -25,6 +25,9 @@ export interface ProductRecord {
   code_cest?: string | null
   ncm?: { id: string; code: string; description: string } | null
   taxation?: { id: string; name: string } | null
+  // Só vem preenchido quando a busca pede `stock: true` (modal de consulta
+  // da Venda Rápida) - soma de todos os depósitos.
+  productStocks?: { availableQuantity: number }[]
 }
 
 export interface ProductPayload {
@@ -114,7 +117,7 @@ export const PRODUCT_UNIT_OPTIONS: { value: string; label: string }[] = [
 export function fetchProducts(
   token: string,
   companyId: string,
-  options: { search?: string; page?: number; limit?: number; role?: number } = {}
+  options: { search?: string; page?: number; limit?: number; role?: number; stock?: boolean } = {}
 ) {
   return apiGet<Paginated<ProductRecord>>(
     '/product',
@@ -124,9 +127,20 @@ export function fetchProducts(
       page: options.page ? String(options.page) : '1',
       limit: options.limit ? String(options.limit) : '10',
       role: options.role !== undefined ? String(options.role) : undefined,
+      stock: options.stock ? 'true' : undefined,
     },
     token
   )
+}
+
+export function totalStock(product: ProductRecord): number {
+  return (product.productStocks || []).reduce((sum, s) => sum + Number(s.availableQuantity || 0), 0)
+}
+
+// Busca de produto pra o modal de consulta da Venda Rápida - online (com
+// estoque), diferente do scan rápido que usa a base local (IndexedDB).
+export function searchProducts(token: string, companyId: string, search: string) {
+  return fetchProducts(token, companyId, { search, limit: 20, stock: true }).then((res) => res.data)
 }
 
 export function fetchProduct(token: string, id: string) {
