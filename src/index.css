@@ -163,4 +163,19 @@ body {
   table thead {
     display: table-header-group;
   }
+
+  /* Comprovante da venda rápida - imprime só #pdv-print-area, some com o
+     resto da tela. O tamanho real do papel na impressora térmica é definido
+     pelo driver dela (não pela @page acima, que é só o padrão A4 do resto
+     do sistema) - o operador escolhe a impressora certa no diálogo do SO. */
+  body:has(#pdv-print-area) > *:not(:has(#pdv-print-area)) {
+    display: none !important;
+  }
+
+  #pdv-print-area {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
 }

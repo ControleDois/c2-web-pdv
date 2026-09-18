@@ -44,6 +44,14 @@ function App() {
     setActiveCompany(company)
   }
 
+  // Usado quando uma tela (ex: Ajustes > Venda Rápida) atualiza a Config da
+  // empresa ativa - reflete na hora, sem precisar trocar de empresa ou logar
+  // de novo pra pegar o valor novo.
+  function handleCompanyUpdate(company: AuthCompany) {
+    saveActiveCompany(company)
+    setActiveCompany(company)
+  }
+
   async function handleSwitchCompany() {
     clearActiveCompany()
     setActiveCompany(null)
@@ -112,7 +120,7 @@ function App() {
           </div>
         </header>
         <main className="min-h-0 flex-1">
-          <PdvPage session={session} company={activeCompany} />
+          <PdvPage session={session} company={activeCompany} onCompanyUpdate={handleCompanyUpdate} />
         </main>
       </div>
     )

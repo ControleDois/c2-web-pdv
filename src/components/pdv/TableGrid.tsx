@@ -1,6 +1,6 @@
 import type { FoodTable } from '../../lib/foodTypes'
 import { isDeliveryTable, isIfoodOrder, activeItems } from '../../lib/foodTypes'
-import { TableIcon, TruckIcon, BagIcon, SettingsIcon } from '../icons'
+import { TableIcon, TruckIcon, BagIcon, SettingsIcon, CoinIcon } from '../icons'
 
 interface TableGridProps {
   tables: FoodTable[]
@@ -9,6 +9,7 @@ interface TableGridProps {
   onSubmit: () => void
   onSelect: (table: FoodTable) => void
   onOpenSettings: () => void
+  onOpenQuickSale?: () => void
 }
 
 function statusDotClass(table: FoodTable): string {
@@ -16,7 +17,15 @@ function statusDotClass(table: FoodTable): string {
   return 'bg-amber-500'
 }
 
-export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings }: TableGridProps) {
+export function TableGrid({
+  tables,
+  search,
+  onSearchChange,
+  onSubmit,
+  onSelect,
+  onOpenSettings,
+  onOpenQuickSale,
+}: TableGridProps) {
   const visible = tables
     .filter((table) => table.status === 'open_empty' || table.status === 'open_with_items')
     .sort((a, b) => a.number - b.number)
@@ -41,6 +50,16 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
             className="w-full max-w-[420px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-5 py-4 text-center text-[22px] font-bold text-[var(--ink)] placeholder:text-[16px] placeholder:font-normal placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--blue-300)]"
           />
         </form>
+        {onOpenQuickSale && (
+          <button
+            type="button"
+            onClick={onOpenQuickSale}
+            title="Venda Rápida"
+            className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl border border-[var(--border)] text-[var(--ink-soft)] transition hover:text-[var(--ink)] md:hidden"
+          >
+            <CoinIcon className="h-4 w-4" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenSettings}

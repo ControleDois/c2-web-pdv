@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { ProductSyncPage } from './ProductSyncPage'
+import { QuickSaleSettingsPage } from './QuickSaleSettingsPage'
+import { QuickSalePage } from './QuickSalePage'
 import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
-import { Sidebar } from '../components/pdv/Sidebar'
+import { Sidebar, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { updateDeliveryOrderStatus } from '../lib/foodApi'
@@ -14,14 +16,26 @@ import type { AuthCompany, AuthSession } from '../lib/auth'
 interface PdvPageProps {
   session: AuthSession
   company: AuthCompany
+  onCompanyUpdate: (company: AuthCompany) => void
 }
 
 type SyncStatus = 'checking' | 'needs-sync' | 'ready'
-type Screen = 'tables' | 'settings'
+type SettingsTab = 'catalog' | 'quick-sale'
 
-export function PdvPage({ session, company }: PdvPageProps) {
+export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
+  const quickSaleEnabled = Boolean(company.config?.quick_sale_enabled)
+  const quickSaleOnlyMode = quickSaleEnabled && Boolean(company.config?.quick_sale_only_mode)
+
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('checking')
-  const [screen, setScreen] = useState<Screen>('tables')
+  const [screen, setScreen] = useState<PdvScreen>(quickSaleOnlyMode ? 'quick-sale' : 'tables')
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('catalog')
+
+  // Se o ajuste "somente venda rápida" for ligado/desligado enquanto o PDV
+  // já está aberto (ex: em outra aba), mantém a tela coerente com o modo.
+  useEffect(() => {
+    if (quickSaleOnlyMode && screen === 'tables') setScreen('quick-sale')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickSaleOnlyMode])
   const { tables, saveTable, setSelectedTableId, reloadFromDb } = useFoodTables(session, company)
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
@@ -146,18 +160,66 @@ export function PdvPage({ session, company }: PdvPageProps) {
     )
   }
 
+  const homeScreen: PdvScreen = quickSaleOnlyMode ? 'quick-sale' : 'tables'
+
   return (
     <div className="flex h-full">
-      <Sidebar screen={screen} onNavigate={setScreen} />
+      <Sidebar
+        screen={screen}
+        onNavigate={setScreen}
+        showTables={!quickSaleOnlyMode}
+        showQuickSale={quickSaleEnabled}
+      />
       <div className="min-h-0 min-w-0 flex-1">
         {screen === 'settings' ? (
-          <ProductSyncPage
-            session={session}
-            company={company}
-            embedded
-            onBack={() => setScreen('tables')}
-            onReady={() => setScreen('tables')}
-          />
+          <div className="flex h-full flex-col">
+            <div className="flex flex-none gap-1 border-b border-[var(--border)] bg-[var(--surface)] px-4 pt-3">
+              <button
+                type="button"
+                onClick={() => setSettingsTab('catalog')}
+                className={`rounded-t-lg px-3.5 py-2 text-[12.5px] font-bold transition ${
+                  settingsTab === 'catalog'
+                    ? 'border-b-2 border-[var(--blue-500)] text-[var(--blue-700)]'
+                    : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                }`}
+              >
+                Cardápio
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsTab('quick-sale')}
+                className={`rounded-t-lg px-3.5 py-2 text-[12.5px] font-bold transition ${
+                  settingsTab === 'quick-sale'
+                    ? 'border-b-2 border-[var(--blue-500)] text-[var(--blue-700)]'
+                    : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                }`}
+              >
+                Venda Rápida
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {settingsTab === 'catalog' ? (
+                <div className="flex justify-center p-4 sm:p-6">
+                  <ProductSyncPage
+                    session={session}
+                    company={company}
+                    embedded
+                    onBack={() => setScreen(homeScreen)}
+                    onReady={() => setScreen(homeScreen)}
+                  />
+                </div>
+              ) : (
+                <QuickSaleSettingsPage
+                  session={session}
+                  company={company}
+                  onBack={() => setScreen(homeScreen)}
+                  onCompanyUpdate={onCompanyUpdate}
+                />
+              )}
+            </div>
+          </div>
+        ) : screen === 'quick-sale' ? (
+          <QuickSalePage session={session} company={company} onExit={() => setScreen(homeScreen)} />
         ) : (
           <TableGrid
             tables={tables}
@@ -166,6 +228,7 @@ export function PdvPage({ session, company }: PdvPageProps) {
             onSubmit={handleTableInputSubmit}
             onSelect={enterTable}
             onOpenSettings={() => setScreen('settings')}
+            onOpenQuickSale={quickSaleEnabled ? () => setScreen('quick-sale') : undefined}
           />
         )}
       </div>

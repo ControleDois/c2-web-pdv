@@ -14,12 +14,30 @@ export interface AuthToken {
   token: string
 }
 
+// Subconjunto da Config da empresa usado pelo PDV - já vem preenchido no
+// login/troca de empresa (o backend faz preload de `config` por empresa),
+// não precisa de uma chamada extra pra buscar.
+export interface ConfigRecord {
+  id: string
+  quick_sale_enabled?: boolean
+  quick_sale_only_mode?: boolean
+  quick_sale_ask_print_preview?: boolean
+  quick_sale_print_model?: 'thermal' | 'a4'
+  sale_category_default_id?: string | null
+  sale_bank_account_default_id?: string | null
+  sale_people_default_id?: string | null
+  central_box_active?: number
+  central_box_payment_methods?: string | null
+  [key: string]: unknown
+}
+
 export interface AuthCompany {
   id: string
   system_type?: number
   license_status?: string
   license_expires_at?: string | null
   people?: AuthPeople | null
+  config?: ConfigRecord | null
   isMaster?: boolean
   // Flag de empresa matriz ("Controle Dois", Company.is_master) — diferente de
   // `isMaster`, que é a role de usuário (ROLE_MASTER_ID) dentro de uma empresa.
