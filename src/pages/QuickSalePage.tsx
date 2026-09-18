@@ -18,6 +18,9 @@ import {
   BoxIcon,
   TagIcon,
   UserIcon,
+  WalletIcon,
+  CreditCardIcon,
+  QrCodeIcon,
 } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -46,10 +49,10 @@ type Step = 'scan' | 'quantity' | 'price'
 type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-preview' | 'receipt'
 
 const PAYMENT_METHODS = [
-  { key: 'N', form_payment: 9, name: 'Dinheiro' },
-  { key: 'D', form_payment: 2, name: 'Débito' },
-  { key: 'C', form_payment: 1, name: 'Crédito' },
-  { key: 'P', form_payment: 10, name: 'PIX' },
+  { key: 'N', form_payment: 9, name: 'Dinheiro', icon: WalletIcon },
+  { key: 'D', form_payment: 2, name: 'Débito', icon: CreditCardIcon },
+  { key: 'C', form_payment: 1, name: 'Crédito', icon: CreditCardIcon },
+  { key: 'P', form_payment: 10, name: 'PIX', icon: QrCodeIcon },
 ]
 
 function parseAmountInput(value: string): number {
@@ -520,7 +523,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
 
-        <div className="flex flex-col items-center gap-6 rounded-[32px] border-2 border-[var(--blue-200)] bg-[var(--surface)] px-12 py-16 shadow-[var(--card-shadow)] sm:px-24">
+        <div className="flex w-full max-w-xl flex-col items-center gap-7 rounded-3xl border border-[var(--border)] bg-[var(--surface)] px-12 py-20 shadow-[var(--card-shadow)] sm:px-28 sm:py-24">
           <div className="relative flex h-28 w-28 items-center justify-center">
             <span className="absolute inset-0 animate-pulse rounded-full bg-[var(--blue-100)]" />
             <span className="relative flex h-24 w-24 items-center justify-center rounded-full bg-[var(--blue-500)] text-white shadow-lg">
@@ -924,20 +927,26 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
             </div>
 
             <div className="mb-3 grid grid-cols-4 gap-2">
-              {PAYMENT_METHODS.map((method, index) => (
-                <button
-                  type="button"
-                  key={method.key}
-                  onClick={() => setPaymentMethodIndex(index)}
-                  className={`rounded-xl border px-2 py-2 text-[12px] font-bold transition ${
-                    index === paymentMethodIndex
-                      ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
-                      : 'border-[var(--border)] text-[var(--ink-soft)]'
-                  }`}
-                >
-                  {method.key} · {method.name}
-                </button>
-              ))}
+              {PAYMENT_METHODS.map((method, index) => {
+                const MethodIcon = method.icon
+                return (
+                  <button
+                    type="button"
+                    key={method.key}
+                    onClick={() => setPaymentMethodIndex(index)}
+                    className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-[11.5px] font-bold transition ${
+                      index === paymentMethodIndex
+                        ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                        : 'border-[var(--border)] text-[var(--ink-soft)]'
+                    }`}
+                  >
+                    <MethodIcon className="h-4 w-4" />
+                    <span>
+                      {method.key} · {method.name}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
 
             <input
@@ -952,6 +961,12 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
                 if (shortcut >= 0) {
                   e.preventDefault()
                   setPaymentMethodIndex(shortcut)
+                } else if (e.key === 'ArrowRight') {
+                  e.preventDefault()
+                  setPaymentMethodIndex((prev) => Math.min(prev + 1, PAYMENT_METHODS.length - 1))
+                } else if (e.key === 'ArrowLeft') {
+                  e.preventDefault()
+                  setPaymentMethodIndex((prev) => Math.max(prev - 1, 0))
                 } else if (e.key === 'Enter') {
                   e.preventDefault()
                   addPaymentLine()
@@ -969,7 +984,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
               className="w-full rounded-xl bg-[var(--page)] px-3.5 py-3 text-center text-[20px] font-bold text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
             />
             <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">
-              Enter adiciona · Delete remove última · F4 confirma
+              ← → troca a forma · Enter adiciona · Delete remove última · F4 confirma
             </p>
 
             {payments.length > 0 && (
