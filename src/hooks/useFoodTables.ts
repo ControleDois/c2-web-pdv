@@ -23,8 +23,11 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
   // pendente ficava pra sempre com a cópia antiga do pedido.
   const pullAndMerge = useCallback(async () => {
     const raw = await pullTables(session.token.token, company.id)
+    if (!Array.isArray(raw)) return
+    const remoteIds = new Set<string>()
     for (const rawTable of raw) {
       const remote = normalizeRemoteTable(rawTable)
+      remoteIds.add(remote.id)
       const current = await getAllTables()
       const local = current.find((table) => table.id === remote.id)
       if (local && local.synchronized === 'N') {
@@ -34,6 +37,16 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
         continue
       }
       await putTable(remote)
+    }
+
+    // O servidor só devolve mesas abertas. Cópia local já sincronizada que
+    // não veio nessa lista foi fechada/cancelada em outro lugar (ex: pedido
+    // do iFood cancelado) - sem apagar, ela ficava aparecendo pra sempre.
+    // Mesa com alteração local pendente ('N') nunca é apagada.
+    for (const local of await getAllTables()) {
+      if (local.synchronized === 'S' && !remoteIds.has(local.id)) {
+        await deleteTable(local.id)
+      }
     }
     await reloadFromDb()
   }, [session.token.token, company.id, reloadFromDb])
