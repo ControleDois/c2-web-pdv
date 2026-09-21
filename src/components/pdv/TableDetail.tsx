@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FoodTable, FoodTableItem, FoodTablePayment } from '../../lib/foodTypes'
-import { activeItems, isDeliveryTable, newLocalId, PAYMENT_METHODS } from '../../lib/foodTypes'
+import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId, PAYMENT_METHODS } from '../../lib/foodTypes'
+import type { IfoodCancellationReason } from '../../lib/foodApi'
+import { ApiError } from '../../lib/api'
 import { filterProductBy, type LocalProduct } from '../../lib/db'
 import { formatCurrency } from '../../lib/format'
-import { ChevronLeftIcon, TrashIcon, XCircleIcon } from '../icons'
+import { ChevronLeftIcon, CopyIcon, TrashIcon, XCircleIcon } from '../icons'
 
 interface TableDetailProps {
   table: FoodTable
@@ -12,6 +14,8 @@ interface TableDetailProps {
   onBack: () => void
   onSave: (table: FoodTable) => void
   onAdvanceDeliveryStatus: (status: string) => void
+  onLoadIfoodCancellationReasons: () => Promise<IfoodCancellationReason[]>
+  onCancelIfoodOrder: (code: string, reason: string) => Promise<void>
 }
 
 type InputMode = 'product' | 'quantity'
@@ -36,7 +40,16 @@ const DELIVERY_STATUS_LABELS: Record<string, string> = {
   canceled: 'Cancelado',
 }
 
-export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdvanceDeliveryStatus }: TableDetailProps) {
+export function TableDetail({
+  table,
+  authorId,
+  authorName,
+  onBack,
+  onSave,
+  onAdvanceDeliveryStatus,
+  onLoadIfoodCancellationReasons,
+  onCancelIfoodOrder,
+}: TableDetailProps) {
   const [inputMode, setInputMode] = useState<InputMode>('product')
   const [search, setSearch] = useState('')
   const [selectedProduct, setSelectedProduct] = useState<LocalProduct | null>(null)
@@ -52,6 +65,13 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
   const [cancelTableOpen, setCancelTableOpen] = useState(false)
   const [cancelTableReason, setCancelTableReason] = useState('')
   const [cancelTableByClient, setCancelTableByClient] = useState(false)
+
+  const [ifoodCancelOpen, setIfoodCancelOpen] = useState(false)
+  const [ifoodReasons, setIfoodReasons] = useState<IfoodCancellationReason[] | null>(null)
+  const [ifoodReasonCode, setIfoodReasonCode] = useState('')
+  const [ifoodCancelError, setIfoodCancelError] = useState<string | null>(null)
+  const [ifoodCancelLoading, setIfoodCancelLoading] = useState(false)
+  const [copiedIfoodId, setCopiedIfoodId] = useState(false)
 
   const [receiveTotalOpen, setReceiveTotalOpen] = useState(false)
   const [receivePayments, setReceivePayments] = useState<FoodTablePayment[]>([])
@@ -84,6 +104,8 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
   const deliveryFee = table.delivery_order?.delivery_fee ?? 0
   const receiveTotal = Math.max(0, subtotal + deliveryFee - partialTotal)
   const delivery = isDeliveryTable(table)
+  const ifood = isIfoodOrder(table)
+  const ifoodFinished = table.delivery_order?.status === 'canceled' || table.delivery_order?.status === 'completed'
 
   function pushAudit(next: FoodTable, description: string, type: 'default' | 'success' | 'danger' | 'warning', reason = '', requestedByClient = false) {
     next.audit.push({
@@ -200,6 +222,41 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
     next.status = stillActive.length > 0 ? 'open_with_items' : 'open_empty'
     setCancelItemOpen(false)
     onSave(next)
+  }
+
+  async function openIfoodCancel() {
+    setIfoodCancelOpen(true)
+    setIfoodCancelError(null)
+    setIfoodReasons(null)
+    setIfoodReasonCode('')
+    try {
+      setIfoodReasons(await onLoadIfoodCancellationReasons())
+    } catch (err) {
+      setIfoodCancelError(err instanceof ApiError ? err.message : 'Não foi possível carregar os motivos do iFood.')
+    }
+  }
+
+  async function confirmIfoodCancel() {
+    const reason = ifoodReasons?.find((item) => item.code === ifoodReasonCode)
+    if (!reason) return
+    setIfoodCancelLoading(true)
+    setIfoodCancelError(null)
+    try {
+      await onCancelIfoodOrder(reason.code, reason.description)
+      setIfoodCancelOpen(false)
+    } catch (err) {
+      setIfoodCancelError(err instanceof ApiError ? err.message : 'O iFood não aceitou o cancelamento.')
+    } finally {
+      setIfoodCancelLoading(false)
+    }
+  }
+
+  function copyIfoodId() {
+    const id = table.delivery_order?.external_order_id
+    if (!id) return
+    navigator.clipboard?.writeText(id)
+    setCopiedIfoodId(true)
+    setTimeout(() => setCopiedIfoodId(false), 2000)
   }
 
   function confirmCancelTable() {
@@ -330,6 +387,29 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
         </div>
       )}
 
+      {ifood && table.delivery_order && (
+        <div className="flex flex-none items-center justify-between gap-3 bg-red-50 px-4 py-2 text-red-700">
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-bold">
+              iFood · Pedido nº {table.delivery_order.external_display_id || '—'}
+            </p>
+            {table.delivery_order.external_order_id && (
+              <p className="break-all font-mono text-[11px]">ID {table.delivery_order.external_order_id}</p>
+            )}
+          </div>
+          {table.delivery_order.external_order_id && (
+            <button
+              type="button"
+              onClick={copyIfoodId}
+              className="flex flex-none items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1 text-[11.5px] font-semibold"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+              {copiedIfoodId ? 'Copiado' : 'Copiar ID'}
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-4">
         {items.length === 0 ? (
           <p className="py-10 text-center text-[13px] text-[var(--muted)]">Nenhum item lançado ainda.</p>
@@ -419,9 +499,14 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
             <TrashIcon className="h-3.5 w-3.5" />
             Cancelar item
           </button>
-          <button type="button" onClick={() => setCancelTableOpen(true)} className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--red-100)] py-2.5 text-[12.5px] font-semibold text-[var(--red-500)]">
+          <button
+            type="button"
+            onClick={() => (ifood ? openIfoodCancel() : setCancelTableOpen(true))}
+            disabled={ifood && ifoodFinished}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--red-100)] py-2.5 text-[12.5px] font-semibold text-[var(--red-500)] disabled:opacity-40"
+          >
             <XCircleIcon className="h-3.5 w-3.5" />
-            Cancelar mesa
+            {ifood ? 'Cancelar pedido' : 'Cancelar mesa'}
           </button>
           <button type="button" onClick={handleCloseTable} className="rounded-xl bg-[var(--blue-500)] py-2.5 text-[12.5px] font-bold text-white">
             Fechar mesa
@@ -450,6 +535,62 @@ export function TableDetail({ table, authorId, authorName, onBack, onSave, onAdv
               </button>
               <button type="button" onClick={confirmCancelItem} disabled={!cancelItemReason.trim()} className="rounded-xl bg-[var(--red-500)] px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50">
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ifoodCancelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !ifoodCancelLoading && setIfoodCancelOpen(false)}>
+          <div className="w-full max-w-[420px] rounded-2xl bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-[14px] font-bold text-[var(--ink)]">
+              Cancelar pedido iFood {table.delivery_order?.external_display_id ? `nº ${table.delivery_order.external_display_id}` : ''}
+            </h2>
+            <p className="mt-1 text-[12px] text-[var(--muted)]">Escolha o motivo — o cancelamento é enviado pro iFood na hora.</p>
+
+            {ifoodReasons === null && !ifoodCancelError && (
+              <p className="mt-4 text-[13px] text-[var(--ink-soft)]">Carregando motivos…</p>
+            )}
+
+            {ifoodReasons && (
+              <div className="mt-3 flex max-h-[280px] flex-col gap-1.5 overflow-y-auto">
+                {ifoodReasons.map((reason) => (
+                  <label
+                    key={reason.code}
+                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[13px] ${
+                      ifoodReasonCode === reason.code
+                        ? 'border-[var(--red-500)] bg-[var(--red-100)] text-[var(--red-500)]'
+                        : 'border-[var(--border)] text-[var(--ink)]'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ifood-cancel-reason"
+                      checked={ifoodReasonCode === reason.code}
+                      onChange={() => setIfoodReasonCode(reason.code)}
+                    />
+                    {reason.description}
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {ifoodCancelError && (
+              <p className="mt-3 rounded-xl bg-[var(--red-100)] px-3 py-2 text-[12.5px] font-medium text-[var(--red-500)]">{ifoodCancelError}</p>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setIfoodCancelOpen(false)} disabled={ifoodCancelLoading} className="rounded-xl px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]">
+                Voltar
+              </button>
+              <button
+                type="button"
+                onClick={confirmIfoodCancel}
+                disabled={!ifoodReasonCode || ifoodCancelLoading}
+                className="rounded-xl bg-[var(--red-500)] px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50"
+              >
+                {ifoodCancelLoading ? 'Cancelando…' : 'Cancelar pedido'}
               </button>
             </div>
           </div>

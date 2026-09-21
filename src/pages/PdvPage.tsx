@@ -7,7 +7,7 @@ import { TableDetail } from '../components/pdv/TableDetail'
 import { Sidebar, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
-import { updateDeliveryOrderStatus } from '../lib/foodApi'
+import { updateDeliveryOrderStatus, fetchIfoodCancellationReasons, cancelIfoodOrder } from '../lib/foodApi'
 import { newLocalId } from '../lib/foodTypes'
 import { countProducts } from '../lib/db'
 import type { FoodTable } from '../lib/foodTypes'
@@ -147,6 +147,26 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     }
   }
 
+  async function handleLoadIfoodCancellationReasons() {
+    if (!selectedTable?.delivery_order) return []
+    return fetchIfoodCancellationReasons(session.token.token, selectedTable.delivery_order.id)
+  }
+
+  async function handleCancelIfoodOrder(code: string, reason: string) {
+    if (!selectedTable?.delivery_order) return
+    await cancelIfoodOrder(session.token.token, selectedTable.delivery_order.id, {
+      cancellation_code: code,
+      reason,
+    })
+    await saveTable({
+      ...selectedTable,
+      status: 'canceled',
+      closed_at: new Date().toISOString(),
+      delivery_order: { ...selectedTable.delivery_order, status: 'canceled' },
+    })
+    exitTable()
+  }
+
   if (selectedTable) {
     return (
       <TableDetail
@@ -156,6 +176,8 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         onBack={exitTable}
         onSave={(updated) => saveTable(updated)}
         onAdvanceDeliveryStatus={handleAdvanceDeliveryStatus}
+        onLoadIfoodCancellationReasons={handleLoadIfoodCancellationReasons}
+        onCancelIfoodOrder={handleCancelIfoodOrder}
       />
     )
   }

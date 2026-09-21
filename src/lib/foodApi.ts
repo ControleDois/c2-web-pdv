@@ -28,6 +28,19 @@ export function updateDeliveryOrderStatus(token: string, orderId: string, status
   return apiPut<unknown>(`/food/delivery-orders/${orderId}/status`, { status }, token)
 }
 
+export interface IfoodCancellationReason {
+  code: string
+  description: string
+}
+
+export function fetchIfoodCancellationReasons(token: string, orderId: string) {
+  return apiGet<IfoodCancellationReason[]>(`/food/delivery-orders/${orderId}/ifood-cancellation-reasons`, {}, token)
+}
+
+export function cancelIfoodOrder(token: string, orderId: string, payload: { cancellation_code: string; reason: string }) {
+  return apiPost<unknown>(`/food/delivery-orders/${orderId}/ifood-cancel`, payload, token)
+}
+
 // Converte o formato cru devolvido pelo servidor (preloads Lucid, snake_case)
 // pro formato local (FoodTable) — mesmo espírito do normalizeRemoteTable do
 // Angular: usa os itens ativos pra decidir open_empty/open_with_items quando

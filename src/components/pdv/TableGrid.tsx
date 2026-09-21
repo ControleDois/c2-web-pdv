@@ -87,7 +87,7 @@ export function TableGrid({
             if (ifood) {
               badgeClass = 'bg-red-100 text-red-600'
               Icon = BagIcon
-              label = 'iFood'
+              label = table.delivery_order?.external_display_id ? `iFood ${table.delivery_order.external_display_id}` : 'iFood'
             } else if (delivery) {
               badgeClass = 'bg-violet-100 text-violet-700'
               Icon = TruckIcon

@@ -105,6 +105,10 @@ export interface FoodTableDeliveryOrder {
   total: number
   /** 'own' (delivery da loja) | 'ifood' */
   origin?: string
+  /** UUID do pedido no iFood (só pedidos do iFood) */
+  external_order_id?: string | null
+  /** Número do pedido que aparece pro cliente/lojista no iFood (ex: 1831) */
+  external_display_id?: string | null
 }
 
 export function isIfoodOrder(table: FoodTable): boolean {
