@@ -13,7 +13,7 @@ interface TableDetailProps {
   authorName: string
   onBack: () => void
   onSave: (table: FoodTable) => void
-  onAdvanceDeliveryStatus: (status: string) => void
+  onAdvanceDeliveryStatus: (status: string) => Promise<void>
   onLoadIfoodCancellationReasons: () => Promise<IfoodCancellationReason[]>
   onCancelIfoodOrder: (code: string, reason: string) => Promise<void>
 }
@@ -72,6 +72,8 @@ export function TableDetail({
   const [ifoodCancelError, setIfoodCancelError] = useState<string | null>(null)
   const [ifoodCancelLoading, setIfoodCancelLoading] = useState(false)
   const [copiedIfoodId, setCopiedIfoodId] = useState(false)
+  const [deliveryBusy, setDeliveryBusy] = useState(false)
+  const [deliveryError, setDeliveryError] = useState<string | null>(null)
 
   const [receiveTotalOpen, setReceiveTotalOpen] = useState(false)
   const [receivePayments, setReceivePayments] = useState<FoodTablePayment[]>([])
@@ -224,6 +226,18 @@ export function TableDetail({
     onSave(next)
   }
 
+  async function advanceDelivery(status: string) {
+    setDeliveryBusy(true)
+    setDeliveryError(null)
+    try {
+      await onAdvanceDeliveryStatus(status)
+    } catch (err) {
+      setDeliveryError(err instanceof ApiError ? err.message : 'Não foi possível atualizar o pedido.')
+    } finally {
+      setDeliveryBusy(false)
+    }
+  }
+
   async function openIfoodCancel() {
     setIfoodCancelOpen(true)
     setIfoodCancelError(null)
@@ -361,28 +375,49 @@ export function TableDetail({
       </div>
 
       {delivery && table.delivery_order && (
-        <div className="flex flex-none items-center justify-between gap-2 bg-violet-100 px-4 py-2 text-violet-800">
-          <span className="text-[12.5px] font-semibold">
-            {DELIVERY_STATUS_LABELS[table.delivery_order.status] ?? table.delivery_order.status}
-          </span>
-          {table.delivery_order.status === 'pending' && (
-            <button type="button" onClick={() => onAdvanceDeliveryStatus('confirmed')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white">
-              Aceitar pedido
-            </button>
-          )}
-          {table.delivery_order.status === 'confirmed' && (
-            <button type="button" onClick={() => onAdvanceDeliveryStatus('preparing')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white">
-              Enviar para cozinha
-            </button>
-          )}
-          {table.delivery_order.status === 'preparing' && (
-            <button
-              type="button"
-              onClick={() => onAdvanceDeliveryStatus(table.delivery_order?.fulfillment_type === 'pickup' ? 'ready_for_pickup' : 'out_for_delivery')}
-              className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white"
-            >
-              {table.delivery_order.fulfillment_type === 'pickup' ? 'Pronto para retirada' : 'Saiu para entrega'}
-            </button>
+        <div className="flex flex-none flex-col">
+          <div className="flex items-center justify-between gap-2 bg-violet-100 px-4 py-2 text-violet-800">
+            <span className="text-[12.5px] font-semibold">
+              {table.delivery_order.status === 'ready_for_pickup' && table.delivery_order.fulfillment_type !== 'pickup'
+                ? 'Pedido pronto — aguardando saída'
+                : DELIVERY_STATUS_LABELS[table.delivery_order.status] ?? table.delivery_order.status}
+            </span>
+            {table.delivery_order.status === 'pending' && (
+              <button type="button" disabled={deliveryBusy} onClick={() => advanceDelivery('confirmed')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white disabled:opacity-60">
+                Aceitar pedido
+              </button>
+            )}
+            {table.delivery_order.status === 'confirmed' && (
+              <button type="button" disabled={deliveryBusy} onClick={() => advanceDelivery('preparing')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white disabled:opacity-60">
+                Enviar para cozinha
+              </button>
+            )}
+            {table.delivery_order.status === 'preparing' && (
+              <button
+                type="button"
+                disabled={deliveryBusy}
+                onClick={() =>
+                  advanceDelivery(
+                    table.delivery_order?.fulfillment_type === 'pickup' || ifood ? 'ready_for_pickup' : 'out_for_delivery'
+                  )
+                }
+                className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white disabled:opacity-60"
+              >
+                {table.delivery_order.fulfillment_type === 'pickup'
+                  ? 'Pronto para retirada'
+                  : ifood
+                    ? 'Pedido pronto'
+                    : 'Saiu para entrega'}
+              </button>
+            )}
+            {table.delivery_order.status === 'ready_for_pickup' && table.delivery_order.fulfillment_type !== 'pickup' && (
+              <button type="button" disabled={deliveryBusy} onClick={() => advanceDelivery('out_for_delivery')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white disabled:opacity-60">
+                Saiu para entrega
+              </button>
+            )}
+          </div>
+          {deliveryError && (
+            <p className="bg-[var(--red-100)] px-4 py-2 text-[12.5px] font-medium text-[var(--red-500)]">{deliveryError}</p>
           )}
         </div>
       )}

@@ -136,15 +136,12 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
 
   async function handleAdvanceDeliveryStatus(status: string) {
     if (!selectedTable?.delivery_order) return
-    try {
-      await updateDeliveryOrderStatus(session.token.token, selectedTable.delivery_order.id, status)
-      await saveTable({
-        ...selectedTable,
-        delivery_order: { ...selectedTable.delivery_order, status: status as any },
-      })
-    } catch {
-      // Sem feedback visual, mesmo comportamento do Angular — só não avança.
-    }
+    // O erro sobe pro TableDetail mostrar (ex: o iFood recusou a mudança).
+    await updateDeliveryOrderStatus(session.token.token, selectedTable.delivery_order.id, status)
+    await saveTable({
+      ...selectedTable,
+      delivery_order: { ...selectedTable.delivery_order, status: status as any },
+    })
   }
 
   async function handleLoadIfoodCancellationReasons() {
