@@ -6,7 +6,7 @@ import { createSale, type SaleProductPayload, type SalePlotPayload } from '../li
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
-import { generateNfceFromSale, nfceErrorMessage } from '../lib/nfce'
+import { fetchNfceDanfe, generateNfceFromSale, nfceErrorMessage, waitNfceOutcome } from '../lib/nfce'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
 import {
@@ -47,11 +47,14 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
 
 interface NfceState {
-  status: 'sending' | 'ok' | 'error'
+  status: 'sending' | 'authorized' | 'error'
   message: string
+  pending?: boolean
+  danfeUrl?: string
+  number?: number
 }
 
 const PAYMENT_METHODS = [
@@ -103,6 +106,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   const [paymentMethodIndex, setPaymentMethodIndex] = useState(0)
   const [paymentAmountInput, setPaymentAmountInput] = useState('')
   const paymentAmountRef = useRef<HTMLInputElement>(null)
+  const danfeFrameRef = useRef<HTMLIFrameElement>(null)
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -398,15 +402,37 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setPaymentAmountInput(newRemaining ? String(newRemaining.toFixed(2)).replace('.', ',') : '')
   }
 
+  function releaseDanfe(state: NfceState | null) {
+    if (state?.danfeUrl) URL.revokeObjectURL(state.danfeUrl)
+  }
+
+  // Envia a NFC-e, espera o retorno da SEFAZ e, autorizada, mostra o DANFE
+  // na tela pra imprimir e entregar ao consumidor.
   async function emitNfce(sale: { id: string; code?: number }) {
+    releaseDanfe(nfceState)
+    setModal('nfce')
     setNfceState({ status: 'sending', message: 'Enviando NFC-e…' })
     try {
       const result = await generateNfceFromSale(session.token.token, sale.id)
-      setNfceState({ status: 'ok', message: result.mensagem || 'NFC-e enviada para processamento.' })
+      const nfeId = result.nfe?.id
+      if (!nfeId) throw new Error('sem-id')
+      setNfceState({ status: 'sending', message: 'Aguardando a autorização da SEFAZ…' })
+      const outcome = await waitNfceOutcome(session.token.token, nfeId)
+      if (!outcome.authorized) {
+        setNfceState({ status: 'error', message: outcome.message, pending: outcome.pending })
+        return
+      }
+      const blob = await fetchNfceDanfe(session.token.token, nfeId).catch(() => null)
+      setNfceState({
+        status: 'authorized',
+        message: 'NFC-e autorizada.',
+        number: outcome.number,
+        danfeUrl: blob ? URL.createObjectURL(blob) : undefined,
+      })
     } catch (err) {
-      const message = nfceErrorMessage(err)
+      const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFC-e.' : nfceErrorMessage(err)
       setNfceState({ status: 'error', message })
-      setNfceNotice(`NFC-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi enviada: ${message}`)
+      setNfceNotice(`NFC-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi emitida: ${message}`)
     }
   }
 
@@ -415,7 +441,10 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   }
 
   function answerNfce(emit: boolean) {
-    if (emit && savedSale) void emitNfce(savedSale)
+    if (emit && savedSale) {
+      void emitNfce(savedSale)
+      return
+    }
     proceedAfterSale()
   }
 
@@ -490,8 +519,11 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
       if (nfceMode === 'ask') {
         setModal('ask-nfce')
       } else {
-        if (nfceMode === 'always') void emitNfce(saved)
-        proceedAfterSale()
+        if (nfceMode === 'always') {
+          void emitNfce(saved)
+        } else {
+          proceedAfterSale()
+        }
       }
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : 'Não foi possível registrar a venda. Tente novamente.')
@@ -501,6 +533,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   }
 
   function closeReceiptAndReset() {
+    releaseDanfe(nfceState)
     setSavedSale(null)
     setNfceState(null)
     resetSale()
@@ -558,7 +591,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     const tone =
       nfceState.status === 'error'
         ? 'bg-[var(--red-100)] text-[var(--red-500)]'
-        : nfceState.status === 'ok'
+        : nfceState.status === 'authorized'
           ? 'bg-[var(--green-100)] text-[var(--green-600)]'
           : 'bg-[var(--page)] text-[var(--ink-soft)]'
     return (
@@ -1124,6 +1157,104 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
                 Sim (S)
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'nfce' && nfceState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl ${
+              nfceState.status === 'authorized' ? 'max-w-lg' : 'max-w-sm'
+            }`}
+            tabIndex={-1}
+            ref={(el) => el?.focus()}
+            onKeyDown={(e) => {
+              if (nfceState.status === 'sending') return
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                proceedAfterSale()
+              } else if (e.key === 'Enter' && nfceState.status === 'authorized' && nfceState.danfeUrl) {
+                e.preventDefault()
+                danfeFrameRef.current?.contentWindow?.print()
+              }
+            }}
+          >
+            <div className="border-b border-[var(--border)] px-5 py-3.5">
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">
+                NFC-e{nfceState.number ? ` nº ${nfceState.number}` : ''}
+              </p>
+            </div>
+
+            {nfceState.status === 'sending' && (
+              <div className="px-5 py-8 text-center">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-[3px] border-[var(--border)] border-t-[var(--blue-500)]" />
+                <p className="mt-4 text-[13.5px] font-semibold text-[var(--ink)]">{nfceState.message}</p>
+                <p className="mt-1 text-[12px] text-[var(--muted)]">Não feche esta tela.</p>
+              </div>
+            )}
+
+            {nfceState.status === 'error' && (
+              <div className="px-5 py-5">
+                <p className="rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--red-500)]">
+                  {nfceState.pending ? '' : 'NFC-e não autorizada: '}
+                  {nfceState.message}
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={proceedAfterSale}
+                    className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+                  >
+                    Seguir sem NFC-e
+                  </button>
+                  {!nfceState.pending && savedSale && (
+                    <button
+                      type="button"
+                      onClick={() => void emitNfce(savedSale)}
+                      className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
+                    >
+                      Tentar de novo
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {nfceState.status === 'authorized' && (
+              <>
+                {nfceState.danfeUrl ? (
+                  <iframe
+                    ref={danfeFrameRef}
+                    src={nfceState.danfeUrl}
+                    title="DANFE NFC-e"
+                    className="h-[60vh] w-full flex-1 border-0 bg-white"
+                  />
+                ) : (
+                  <p className="px-5 py-8 text-center text-[13px] font-semibold text-[var(--green-600)]">
+                    NFC-e autorizada, mas não foi possível carregar o DANFE. Consulte em Notas Fiscais.
+                  </p>
+                )}
+                <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
+                  <button
+                    type="button"
+                    onClick={proceedAfterSale}
+                    className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+                  >
+                    Continuar (Esc)
+                  </button>
+                  {nfceState.danfeUrl && (
+                    <button
+                      type="button"
+                      onClick={() => danfeFrameRef.current?.contentWindow?.print()}
+                      className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
+                    >
+                      Imprimir NFC-e (Enter)
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
