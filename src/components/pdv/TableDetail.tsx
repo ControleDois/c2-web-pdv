@@ -410,6 +410,18 @@ export function TableDetail({
                     : 'Saiu para entrega'}
               </button>
             )}
+            {ifood &&
+              table.delivery_order.fulfillment_type !== 'pickup' &&
+              (table.delivery_order.status === 'confirmed' || table.delivery_order.status === 'preparing') && (
+                <button
+                  type="button"
+                  disabled={deliveryBusy}
+                  onClick={() => advanceDelivery('out_for_delivery')}
+                  className="rounded-lg border border-violet-700 px-3 py-1 text-[12px] font-bold text-violet-700 disabled:opacity-60"
+                >
+                  Despachar direto
+                </button>
+              )}
             {table.delivery_order.status === 'ready_for_pickup' && table.delivery_order.fulfillment_type !== 'pickup' && (
               <button type="button" disabled={deliveryBusy} onClick={() => advanceDelivery('out_for_delivery')} className="rounded-lg bg-violet-700 px-3 py-1 text-[12px] font-bold text-white disabled:opacity-60">
                 Saiu para entrega
