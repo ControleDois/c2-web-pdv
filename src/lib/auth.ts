@@ -25,6 +25,8 @@ export interface ConfigRecord {
   quick_sale_print_model?: 'thermal' | 'a4'
   quick_sale_ask_quantity?: boolean
   quick_sale_ask_price?: boolean
+  quick_sale_nfce_mode?: 'off' | 'ask' | 'always'
+  nfe_module_enabled?: boolean
   sale_category_default_id?: string | null
   sale_bank_account_default_id?: string | null
   sale_people_default_id?: string | null

@@ -6,6 +6,7 @@ import { createSale, type SaleProductPayload, type SalePlotPayload } from '../li
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
+import { generateNfceFromSale, nfceErrorMessage } from '../lib/nfce'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
 import {
@@ -46,7 +47,12 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'ask-preview' | 'receipt'
+
+interface NfceState {
+  status: 'sending' | 'ok' | 'error'
+  message: string
+}
 
 const PAYMENT_METHODS = [
   { key: 'N', form_payment: 9, name: 'Dinheiro', icon: WalletIcon },
@@ -101,6 +107,12 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
+  const [savedSale, setSavedSale] = useState<{ id: string; code?: number } | null>(null)
+  const [nfceState, setNfceState] = useState<NfceState | null>(null)
+  // Erro de NFC-e que sobrevive ao reset da venda (o operador pode fechar o
+  // comprovante antes do envio terminar) - avisa na tela inicial.
+  const [nfceNotice, setNfceNotice] = useState<string | null>(null)
+  const nfceMode = config?.quick_sale_nfce_mode ?? 'off'
 
   const total = cart.reduce((sum, item) => sum + item.unitValue * item.quantity, 0)
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0)
@@ -156,6 +168,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   }
 
   function startSale() {
+    setNfceNotice(null)
     resetSale()
     setPhase('active')
   }
@@ -385,6 +398,27 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setPaymentAmountInput(newRemaining ? String(newRemaining.toFixed(2)).replace('.', ',') : '')
   }
 
+  async function emitNfce(sale: { id: string; code?: number }) {
+    setNfceState({ status: 'sending', message: 'Enviando NFC-e…' })
+    try {
+      const result = await generateNfceFromSale(session.token.token, sale.id)
+      setNfceState({ status: 'ok', message: result.mensagem || 'NFC-e enviada para processamento.' })
+    } catch (err) {
+      const message = nfceErrorMessage(err)
+      setNfceState({ status: 'error', message })
+      setNfceNotice(`NFC-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi enviada: ${message}`)
+    }
+  }
+
+  function proceedAfterSale() {
+    setModal(config?.quick_sale_ask_print_preview ? 'ask-preview' : 'receipt')
+  }
+
+  function answerNfce(emit: boolean) {
+    if (emit && savedSale) void emitNfce(savedSale)
+    proceedAfterSale()
+  }
+
   async function confirmFinalSale() {
     if (remaining > 0 || payments.length === 0 || !myPerson) return
     setSubmitting(true)
@@ -449,10 +483,15 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
       }
       setReceipt(receiptData)
 
-      if (config?.quick_sale_ask_print_preview) {
-        setModal('ask-preview')
+      const saved = { id: sale.id, code: sale.code }
+      setSavedSale(saved)
+      setNfceState(null)
+
+      if (nfceMode === 'ask') {
+        setModal('ask-nfce')
       } else {
-        setModal('receipt')
+        if (nfceMode === 'always') void emitNfce(saved)
+        proceedAfterSale()
       }
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : 'Não foi possível registrar a venda. Tente novamente.')
@@ -462,6 +501,8 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   }
 
   function closeReceiptAndReset() {
+    setSavedSale(null)
+    setNfceState(null)
     resetSale()
     setModal(null)
     setPhase('idle')
@@ -512,6 +553,22 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     )
   }
 
+  function renderNfceNote() {
+    if (!nfceState) return null
+    const tone =
+      nfceState.status === 'error'
+        ? 'bg-[var(--red-100)] text-[var(--red-500)]'
+        : nfceState.status === 'ok'
+          ? 'bg-[var(--green-100)] text-[var(--green-600)]'
+          : 'bg-[var(--page)] text-[var(--ink-soft)]'
+    return (
+      <p className={`rounded-xl px-3.5 py-2 text-[12.5px] font-medium ${tone}`}>
+        {nfceState.status === 'error' ? 'NFC-e não enviada: ' : ''}
+        {nfceState.message}
+      </p>
+    )
+  }
+
   if (phase === 'idle') {
     return (
       <div className="relative flex h-full flex-col items-center justify-center gap-6 bg-[var(--page)] p-6 text-center">
@@ -522,6 +579,15 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
+
+        {nfceNotice && (
+          <div className="absolute inset-x-16 top-4 flex items-start justify-between gap-3 rounded-xl bg-[var(--red-100)] px-4 py-2.5 text-left text-[12.5px] font-medium text-[var(--red-500)]">
+            <span>{nfceNotice}</span>
+            <button type="button" onClick={() => setNfceNotice(null)} className="flex-none font-bold">
+              Fechar
+            </button>
+          </div>
+        )}
 
         <div className="flex w-full max-w-xl flex-col items-center gap-7 rounded-3xl border border-[var(--border)] bg-[var(--surface)] px-12 py-20 shadow-[var(--card-shadow)] sm:px-28 sm:py-24">
           <div className="relative flex h-28 w-28 items-center justify-center">
@@ -1025,6 +1091,43 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
         </div>
       )}
 
+      {modal === 'ask-nfce' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div
+            className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
+            tabIndex={-1}
+            ref={(el) => el?.focus()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' || e.key.toUpperCase() === 'N') {
+                e.preventDefault()
+                answerNfce(false)
+              } else if (e.key === 'Enter' || e.key.toUpperCase() === 'S') {
+                e.preventDefault()
+                answerNfce(true)
+              }
+            }}
+          >
+            <p className="text-[14px] font-semibold text-[var(--ink)]">Venda registrada! Emitir NFC-e?</p>
+            <div className="mt-4 flex justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => answerNfce(false)}
+                className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]"
+              >
+                Não (N)
+              </button>
+              <button
+                type="button"
+                onClick={() => answerNfce(true)}
+                className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white"
+              >
+                Sim (S)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modal === 'ask-preview' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div
@@ -1042,6 +1145,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
             }}
           >
             <p className="text-[14px] font-semibold text-[var(--ink)]">Venda registrada! Mostrar comprovante?</p>
+            {nfceState && <div className="mt-3">{renderNfceNote()}</div>}
             <div className="mt-4 flex justify-center gap-2">
               <button
                 type="button"
@@ -1081,6 +1185,20 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
                 Modelo: {config?.quick_sale_print_model === 'a4' ? 'Folha A4' : 'Impressora térmica'}
               </p>
             </div>
+            {nfceState && (
+              <div className="flex flex-none items-center justify-between gap-2 border-b border-[var(--border)] px-5 py-2.5">
+                <div className="min-w-0 flex-1">{renderNfceNote()}</div>
+                {nfceState.status === 'error' && savedSale && (
+                  <button
+                    type="button"
+                    onClick={() => void emitNfce(savedSale)}
+                    className="flex-none rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ink)]"
+                  >
+                    Tentar de novo
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-5">
               <QuickSaleReceipt data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
               <QuickSalePrintPortal data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { updateConfig } from '../lib/config'
 import { ApiError } from '../lib/api'
+import type { NfceMode } from '../lib/nfce'
 import { ChevronLeftIcon, CheckCircleIcon, CoinIcon, PrinterIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -39,6 +40,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [printModel, setPrintModel] = useState<'thermal' | 'a4'>(config?.quick_sale_print_model ?? 'thermal')
   const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
   const [askPrice, setAskPrice] = useState(Boolean(config?.quick_sale_ask_price))
+  const [nfceMode, setNfceMode] = useState<NfceMode>(config?.quick_sale_nfce_mode ?? 'off')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -59,6 +61,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_print_model: printModel,
         quick_sale_ask_quantity: askQuantity,
         quick_sale_ask_price: askPrice,
+        quick_sale_nfce_mode: nfceMode,
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -141,6 +144,44 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             </p>
           </div>
           <Toggle checked={askPreview} onChange={setAskPreview} />
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="mb-3">
+            <p className="text-[13.5px] font-bold text-[var(--ink)]">NFC-e na venda rápida</p>
+            <p className="text-[11.5px] text-[var(--ink-soft)]">
+              O que fazer com a NFC-e ao finalizar a venda. Usa a configuração de NFC-e do administrativo (Configurações
+              → Fiscal) e segue o mesmo fluxo da NF-e.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                { value: 'off', label: 'Não emitir' },
+                { value: 'ask', label: 'Perguntar' },
+                { value: 'always', label: 'Sempre emitir' },
+              ] as { value: NfceMode; label: string }[]
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setNfceMode(option.value)}
+                className={`rounded-xl border px-3 py-2.5 text-[13px] font-semibold transition ${
+                  nfceMode === option.value
+                    ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                    : 'border-[var(--border)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {nfceMode !== 'off' && config?.nfe_module_enabled === false && (
+            <p className="mt-2 text-[11.5px] font-medium text-[var(--red-500)]">
+              O módulo de NFe não está ativo nessa empresa — ative no administrativo (Configurações → Fiscal), senão a
+              NFC-e não será enviada.
+            </p>
+          )}
         </div>
 
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
