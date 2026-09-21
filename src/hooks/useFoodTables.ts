@@ -17,33 +17,35 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
     setTables(all.sort((a, b) => a.number - b.number))
   }, [])
 
-  // Carga inicial (local) + pull único do servidor (o Angular também só faz
+  // Traz as mesas do servidor pro banco local. Edição local pendente vence
+  // sobre o pull, EXCETO os dados do pedido de delivery/iFood (número, ID,
+  // status): esses são do servidor, então sempre atualizam - senão uma mesa
+  // pendente ficava pra sempre com a cópia antiga do pedido.
+  const pullAndMerge = useCallback(async () => {
+    const raw = await pullTables(session.token.token, company.id)
+    for (const rawTable of raw) {
+      const remote = normalizeRemoteTable(rawTable)
+      const current = await getAllTables()
+      const local = current.find((table) => table.id === remote.id)
+      if (local && local.synchronized === 'N') {
+        if (remote.delivery_order) {
+          await putTable({ ...local, delivery_order: { ...local.delivery_order, ...remote.delivery_order } })
+        }
+        continue
+      }
+      await putTable(remote)
+    }
+    await reloadFromDb()
+  }, [session.token.token, company.id, reloadFromDb])
+
+  // Carga inicial (local) + pull do servidor no boot (o Angular também só faz
   // pull completo uma vez no boot, não periodicamente).
   useEffect(() => {
-    let cancelled = false
-
     reloadFromDb()
 
-    pullTables(session.token.token, company.id)
-      .then(async (raw) => {
-        if (cancelled) return
-        for (const rawTable of raw) {
-          const remote = normalizeRemoteTable(rawTable)
-          const current = await getAllTables()
-          const local = current.find((table) => table.id === remote.id)
-          // Edição local pendente sempre vence sobre o pull.
-          if (local && local.synchronized === 'N') continue
-          await putTable(remote)
-        }
-        if (!cancelled) await reloadFromDb()
-      })
-      .catch(() => {
-        // Sem servidor disponível no boot, segue só com o que já tem local.
-      })
-
-    return () => {
-      cancelled = true
-    }
+    pullAndMerge().catch(() => {
+      // Sem servidor disponível no boot, segue só com o que já tem local.
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.id])
 
@@ -124,5 +126,5 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
     return updated
   }
 
-  return { tables, saveTable, setSelectedTableId, reloadFromDb }
+  return { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer: pullAndMerge }
 }

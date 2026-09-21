@@ -8,7 +8,7 @@ import { Sidebar, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { updateDeliveryOrderStatus, fetchIfoodCancellationReasons, cancelIfoodOrder } from '../lib/foodApi'
-import { newLocalId } from '../lib/foodTypes'
+import { isIfoodOrder, newLocalId } from '../lib/foodTypes'
 import { countProducts } from '../lib/db'
 import type { FoodTable } from '../lib/foodTypes'
 import type { AuthCompany, AuthSession } from '../lib/auth'
@@ -36,7 +36,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     if (quickSaleOnlyMode && screen === 'tables') setScreen('quick-sale')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickSaleOnlyMode])
-  const { tables, saveTable, setSelectedTableId, reloadFromDb } = useFoodTables(session, company)
+  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer } = useFoodTables(session, company)
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -126,6 +126,11 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   function enterTable(table: FoodTable) {
     setSelectedId(table.id)
     setSelectedTableId(table.id)
+    // Pedido do iFood aberto sem número/ID (cópia local antiga): busca do
+    // servidor na hora pra mostrar e permitir despachar.
+    if (isIfoodOrder(table) && !table.delivery_order?.external_display_id) {
+      refreshFromServer().catch(() => undefined)
+    }
   }
 
   function exitTable() {
