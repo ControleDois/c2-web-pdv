@@ -5,7 +5,7 @@ import { searchProducts, totalStock, type ProductRecord } from '../lib/products'
 import { createSale, type SaleProductPayload, type SalePlotPayload } from '../lib/sales'
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
-import { QuickSaleReceipt, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
+import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
 import {
@@ -1083,6 +1083,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
             </div>
             <div className="flex-1 overflow-y-auto p-5">
               <QuickSaleReceipt data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
+              <QuickSalePrintPortal data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
             </div>
             <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
               <button

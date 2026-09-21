@@ -164,18 +164,25 @@ body {
     display: table-header-group;
   }
 
-  /* Comprovante da venda rápida - imprime só #pdv-print-area, some com o
-     resto da tela. O tamanho real do papel na impressora térmica é definido
-     pelo driver dela (não pela @page acima, que é só o padrão A4 do resto
-     do sistema) - o operador escolhe a impressora certa no diálogo do SO. */
-  body:has(#pdv-print-area) > *:not(:has(#pdv-print-area)) {
+  /* Comprovante da venda rápida: o app inteiro (#root) some na impressão e só
+     a cópia montada no <body> (#pdv-print-root, ver QuickSaleReceipt.tsx)
+     aparece. O tamanho da página é definido junto com essa cópia. */
+  body:has(#pdv-print-root) > #root {
     display: none !important;
   }
 
-  #pdv-print-area {
+  #pdv-print-root {
     position: static !important;
-    width: auto !important;
-    height: auto !important;
-    overflow: visible !important;
+    left: auto !important;
+    visibility: visible !important;
   }
+}
+
+/* Na tela a cópia de impressão fica fora do enquadramento, mas com layout (não
+   display:none) pra dar pra medir a altura do cupom térmico. */
+#pdv-print-root {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  visibility: hidden;
 }

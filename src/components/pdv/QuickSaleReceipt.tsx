@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { formatCurrency, formatDateTime } from '../../lib/format'
 
 export interface ReceiptItem {
@@ -24,24 +26,16 @@ export interface ReceiptData {
   change: number
 }
 
+type PrintModel = 'thermal' | 'a4'
+
 interface QuickSaleReceiptProps {
   data: ReceiptData
-  printModel: 'thermal' | 'a4'
+  printModel: PrintModel
 }
 
-// Área isolada de impressão - só o que está dentro de #pdv-print-area
-// aparece no @media print (ver index.css), igual ao padrão do Angular.
-export function QuickSaleReceipt({ data, printModel }: QuickSaleReceiptProps) {
+function ReceiptBody({ data, printModel }: QuickSaleReceiptProps) {
   return (
-    <div
-      id="pdv-print-area"
-      className={printModel === 'thermal' ? 'thermal-receipt' : 'a4-receipt'}
-      style={
-        printModel === 'thermal'
-          ? { width: '300px', fontFamily: 'monospace', fontSize: '12px', color: '#000', background: '#fff' }
-          : { width: '100%', maxWidth: '700px', fontFamily: 'sans-serif', fontSize: '13px', color: '#000', background: '#fff' }
-      }
-    >
+    <>
       <div style={{ textAlign: 'center', marginBottom: 10 }}>
         <p style={{ fontWeight: 700, fontSize: printModel === 'thermal' ? '13px' : '16px', margin: 0 }}>
           {data.companyName}
@@ -84,6 +78,82 @@ export function QuickSaleReceipt({ data, printModel }: QuickSaleReceiptProps) {
       </div>
 
       <p style={{ textAlign: 'center', marginTop: 14, fontSize: '11px' }}>Obrigado pela preferência!</p>
+    </>
+  )
+}
+
+// Pré-visualização na tela (dentro do modal).
+export function QuickSaleReceipt({ data, printModel }: QuickSaleReceiptProps) {
+  return (
+    <div
+      className={printModel === 'thermal' ? 'thermal-receipt' : 'a4-receipt'}
+      style={
+        printModel === 'thermal'
+          ? { width: '300px', fontFamily: 'monospace', fontSize: '12px', color: '#000', background: '#fff' }
+          : { width: '100%', maxWidth: '700px', fontFamily: 'sans-serif', fontSize: '13px', color: '#000', background: '#fff' }
+      }
+    >
+      <ReceiptBody data={data} printModel={printModel} />
     </div>
+  )
+}
+
+const MM_PER_PX = 25.4 / 96
+
+// Cópia do comprovante feita só pra impressão, montada direto no <body>
+// (fora do app/modal). No @media print o #root inteiro some e só esta cópia
+// aparece - ver index.css. O tamanho da página também é definido aqui:
+//  - térmica: 80mm de largura e altura medida do conteúdo (sai do tamanho do
+//    cupom, sem folha em branco); margem 0 também some com cabeçalho/rodapé
+//    do navegador (data, título, URL).
+//  - A4: retrato, margem tratada por padding do próprio comprovante.
+export function QuickSalePrintPortal({ data, printModel }: QuickSaleReceiptProps) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [thermalHeightMm, setThermalHeightMm] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    if (printModel !== 'thermal' || !contentRef.current) {
+      setThermalHeightMm(null)
+      return
+    }
+    setThermalHeightMm(Math.ceil(contentRef.current.scrollHeight * MM_PER_PX) + 4)
+  }, [data, printModel])
+
+  const pageRule =
+    printModel === 'thermal'
+      ? `@page { size: 80mm ${thermalHeightMm ?? 200}mm; margin: 0; }`
+      : '@page { size: A4 portrait; margin: 0; }'
+
+  return createPortal(
+    <div id="pdv-print-root">
+      <style>{pageRule}</style>
+      <div
+        ref={contentRef}
+        style={
+          printModel === 'thermal'
+            ? {
+                width: '80mm',
+                boxSizing: 'border-box',
+                padding: '4mm',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: '#000',
+                background: '#fff',
+              }
+            : {
+                width: '210mm',
+                boxSizing: 'border-box',
+                padding: '18mm 22mm',
+                fontFamily: 'sans-serif',
+                fontSize: '13px',
+                color: '#000',
+                background: '#fff',
+              }
+        }
+      >
+        <ReceiptBody data={data} printModel={printModel} />
+      </div>
+    </div>,
+    document.body
   )
 }
