@@ -209,8 +209,12 @@ function ReceiptBody({ nfce, qrCodeUrl }: NfceReceiptProps) {
       </div>
 
       {qrDataUrl && (
-        <div style={{ textAlign: 'center', margin: '8px 0' }}>
-          <img src={qrDataUrl} alt="QR-code da NFC-e" style={{ width: '160px', height: '160px' }} />
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
+          <img
+            src={qrDataUrl}
+            alt="QR-code da NFC-e"
+            style={{ display: 'block', width: '160px', height: '160px', margin: '0 auto' }}
+          />
         </div>
       )}
 
