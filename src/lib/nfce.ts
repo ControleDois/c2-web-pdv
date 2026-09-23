@@ -119,3 +119,67 @@ export function fetchNfceHistory(
     token
   )
 }
+
+export interface NfceItemDetail {
+  numero_item: string
+  codigo_produto: string
+  descricao: string
+  unidade_comercial: string
+  quantidade_comercial: number
+  valor_unitario_comercial: number
+  valor_bruto: number
+}
+
+export interface NfcePaymentDetail {
+  forma_pagamento: string
+  descricao_pagamento: string
+  valor_pagamento: number
+}
+
+// Tudo que o cupom (DANFE NFC-e) precisa pra se desenhar sozinho, sem
+// depender do PDF gerado pelo Delphi/ACBr - ver QuickSaleReceipt.tsx. Vem
+// direto do que a própria nota já guarda (emitente é denormalizado na
+// nota na hora da emissão, não muda mesmo se o cadastro da empresa mudar
+// depois).
+export interface NfceDetails {
+  id: string
+  numero: number
+  serie: number
+  chave_nfe: string
+  protocolo: string | null
+  data_emissao: string
+  updatedAt: string
+  status: number
+  nome_emitente: string
+  nome_fantasia_emitente: string | null
+  cnpj_emitente: string | null
+  cpf_emitente: string | null
+  inscricao_estadual_emitente: string | null
+  logradouro_emitente: string | null
+  numero_emitente: string | null
+  bairro_emitente: string | null
+  municipio_emitente: string | null
+  uf_emitente: string | null
+  cep_emitente: string | null
+  telefone_emitente: string | null
+  nome_destinatario: string | null
+  cpf_destinatario: string | null
+  cnpj_destinatario: string | null
+  valor_produtos: number
+  valor_desconto: number
+  valor_frete: number
+  valor_seguro: number
+  valor_outras_despesas: number
+  valor_total: number
+  valor_total_tributos: number | null
+  itens: NfceItemDetail[]
+  pagamentos: NfcePaymentDetail[]
+}
+
+export function fetchNfceDetails(token: string, nfeId: string) {
+  return apiGet<NfceDetails>(`/nfe/${nfeId}`, undefined, token)
+}
+
+export function fetchNfceQrCode(token: string, nfeId: string) {
+  return apiGet<{ url: string }>(`/nfe/${nfeId}/qrcode`, undefined, token)
+}

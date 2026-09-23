@@ -7,7 +7,15 @@ import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
-import { fetchNfceDanfe, generateNfceFromSale, nfceErrorMessage, waitNfceOutcome } from '../lib/nfce'
+import {
+  fetchNfceDetails,
+  fetchNfceQrCode,
+  generateNfceFromSale,
+  nfceErrorMessage,
+  waitNfceOutcome,
+  type NfceDetails,
+} from '../lib/nfce'
+import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
 import {
@@ -55,8 +63,9 @@ interface NfceState {
   status: 'sending' | 'authorized' | 'error'
   message: string
   pending?: boolean
-  danfeUrl?: string
   number?: number
+  details?: NfceDetails
+  qrCodeUrl?: string | null
 }
 
 const PAYMENT_METHODS = [
@@ -109,7 +118,6 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   const [paymentMethodIndex, setPaymentMethodIndex] = useState(0)
   const [paymentAmountInput, setPaymentAmountInput] = useState('')
   const paymentAmountRef = useRef<HTMLInputElement>(null)
-  const danfeFrameRef = useRef<HTMLIFrameElement>(null)
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -405,14 +413,11 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setPaymentAmountInput(newRemaining ? String(newRemaining.toFixed(2)).replace('.', ',') : '')
   }
 
-  function releaseDanfe(state: NfceState | null) {
-    if (state?.danfeUrl) URL.revokeObjectURL(state.danfeUrl)
-  }
-
-  // Envia a NFC-e, espera o retorno da SEFAZ e, autorizada, mostra o DANFE
-  // na tela pra imprimir e entregar ao consumidor.
+  // Envia a NFC-e, espera o retorno da SEFAZ e, autorizada, monta o cupom
+  // (nosso próprio HTML/CSS, ver NfceReceipt.tsx) na tela pra imprimir e
+  // entregar ao consumidor - não depende mais do PDF gerado pelo
+  // Delphi/ACBr, que saía em A4/layout de NF-e normal, não de cupom.
   async function emitNfce(sale: { id: string; code?: number }) {
-    releaseDanfe(nfceState)
     setModal('nfce')
     setNfceState({ status: 'sending', message: 'Enviando NFC-e…' })
     try {
@@ -425,12 +430,16 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
         setNfceState({ status: 'error', message: outcome.message, pending: outcome.pending })
         return
       }
-      const blob = await fetchNfceDanfe(session.token.token, nfeId).catch(() => null)
+      const [details, qrCode] = await Promise.all([
+        fetchNfceDetails(session.token.token, nfeId),
+        fetchNfceQrCode(session.token.token, nfeId).catch(() => null),
+      ])
       setNfceState({
         status: 'authorized',
         message: 'NFC-e autorizada.',
         number: outcome.number,
-        danfeUrl: blob ? URL.createObjectURL(blob) : undefined,
+        details,
+        qrCodeUrl: qrCode?.url ?? null,
       })
     } catch (err) {
       const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFC-e.' : nfceErrorMessage(err)
@@ -536,7 +545,6 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   }
 
   function closeReceiptAndReset() {
-    releaseDanfe(nfceState)
     setSavedSale(null)
     setNfceState(null)
     resetSale()
@@ -1189,9 +1197,9 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
               if (e.key === 'Escape') {
                 e.preventDefault()
                 proceedAfterSale()
-              } else if (e.key === 'Enter' && nfceState.status === 'authorized' && nfceState.danfeUrl) {
+              } else if (e.key === 'Enter' && nfceState.status === 'authorized' && nfceState.details) {
                 e.preventDefault()
-                danfeFrameRef.current?.contentWindow?.print()
+                window.print()
               }
             }}
           >
@@ -1238,16 +1246,15 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
 
             {nfceState.status === 'authorized' && (
               <>
-                {nfceState.danfeUrl ? (
-                  <iframe
-                    ref={danfeFrameRef}
-                    src={nfceState.danfeUrl}
-                    title="DANFE NFC-e"
-                    className="h-[60vh] w-full flex-1 border-0 bg-white"
-                  />
+                {nfceState.details ? (
+                  <div className="flex-1 overflow-y-auto bg-[var(--page)] p-5">
+                    <div className="mx-auto w-fit rounded-lg bg-white p-3 shadow-sm">
+                      <NfceReceipt nfce={nfceState.details} qrCodeUrl={nfceState.qrCodeUrl ?? null} />
+                    </div>
+                  </div>
                 ) : (
                   <p className="px-5 py-8 text-center text-[13px] font-semibold text-[var(--green-600)]">
-                    NFC-e autorizada, mas não foi possível carregar o DANFE. Consulte em Notas Fiscais.
+                    NFC-e autorizada, mas não foi possível carregar o cupom. Consulte em Notas Fiscais.
                   </p>
                 )}
                 <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
@@ -1258,16 +1265,17 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
                   >
                     Continuar (Esc)
                   </button>
-                  {nfceState.danfeUrl && (
+                  {nfceState.details && (
                     <button
                       type="button"
-                      onClick={() => danfeFrameRef.current?.contentWindow?.print()}
+                      onClick={() => window.print()}
                       className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
                     >
                       Imprimir NFC-e (Enter)
                     </button>
                   )}
                 </div>
+                {nfceState.details && <NfcePrintPortal nfce={nfceState.details} qrCodeUrl={nfceState.qrCodeUrl ?? null} />}
               </>
             )}
           </div>
