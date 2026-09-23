@@ -6,6 +6,7 @@ import { createSale, type SaleProductPayload, type SalePlotPayload } from '../li
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
+import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
 import { fetchNfceDanfe, generateNfceFromSale, nfceErrorMessage, waitNfceOutcome } from '../lib/nfce'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
@@ -22,6 +23,7 @@ import {
   WalletIcon,
   CreditCardIcon,
   QrCodeIcon,
+  FileTextIcon,
 } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -82,6 +84,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
   const [client, setClient] = useState<PersonRecord | null>(null)
 
   const [modal, setModal] = useState<Modal>(null)
+  const [nfceHistoryOpen, setNfceHistoryOpen] = useState(false)
 
   // Fluxo de bipagem/digitação: um único campo sempre focado, que muda de
   // papel conforme o passo (buscar produto -> quantidade -> preço).
@@ -673,11 +676,23 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
             </p>
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-[11px] text-[var(--muted)]">Total</p>
-          <p className="text-[20px] font-bold text-[var(--ink)]">{formatCurrency(total)}</p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setNfceHistoryOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[11.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+            title="NFC-e emitidas"
+          >
+            <FileTextIcon className="h-3.5 w-3.5" /> NFC-e
+          </button>
+          <div className="text-right">
+            <p className="text-[11px] text-[var(--muted)]">Total</p>
+            <p className="text-[20px] font-bold text-[var(--ink)]">{formatCurrency(total)}</p>
+          </div>
         </div>
       </div>
+
+      <NfceHistoryModal open={nfceHistoryOpen} session={session} company={company} onClose={() => setNfceHistoryOpen(false)} />
 
       <div className="flex-none border-b border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="flex items-center gap-2 px-1 pb-2">

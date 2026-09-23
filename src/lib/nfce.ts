@@ -81,3 +81,41 @@ export async function waitNfceOutcome(token: string, nfeId: string): Promise<Nfc
 export function fetchNfceDanfe(token: string, nfeId: string): Promise<Blob> {
   return apiFetchBlob(`/nfe/${nfeId}/file/danfe`, undefined, token)
 }
+
+export interface NfceHistoryItem {
+  id: string
+  code?: number
+  numero?: number | null
+  serie?: number | null
+  status: number
+  mensagem_sefaz?: string | null
+  saleId?: string | null
+  data_emissao?: string | null
+  createdAt?: string
+  people?: { id: string; name: string } | null
+}
+
+interface Paginated<T> {
+  data: T[]
+  meta: { total: number; per_page: number; current_page: number; last_page: number }
+}
+
+// Histórico de NFC-e da empresa (modelo 65), mais recente primeiro - mesma
+// listagem de Notas Fiscais do administrativo, só filtrada. status: 1 =
+// processando, 2 = autorizada, 3 = erro/rejeitada.
+export function fetchNfceHistory(
+  token: string,
+  companyId: string,
+  options: { page?: number; limit?: number } = {}
+) {
+  return apiGet<Paginated<NfceHistoryItem>>(
+    '/nfe',
+    {
+      companyId,
+      modelo: '65',
+      page: options.page ? String(options.page) : '1',
+      limit: options.limit ? String(options.limit) : '30',
+    },
+    token
+  )
+}
