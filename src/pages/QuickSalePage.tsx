@@ -39,6 +39,8 @@ interface QuickSalePageProps {
   session: AuthSession
   company: AuthCompany
   onExit: () => void
+  onOpenCashRegister?: () => void
+  terminalId?: string
 }
 
 interface CartItem {
@@ -81,7 +83,7 @@ function parseAmountInput(value: string): number {
   return Number.isNaN(num) ? 0 : num
 }
 
-export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) {
+export function QuickSalePage({ session, company, onExit, onOpenCashRegister, terminalId }: QuickSalePageProps) {
   const myPerson = useMyCompanyPerson(session, company)
   const config = company.config
 
@@ -421,7 +423,7 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
     setModal('nfce')
     setNfceState({ status: 'sending', message: 'Enviando NFC-e…' })
     try {
-      const result = await generateNfceFromSale(session.token.token, sale.id)
+      const result = await generateNfceFromSale(session.token.token, sale.id, terminalId)
       const nfeId = result.nfe?.id
       if (!nfeId) throw new Error('sem-id')
       setNfceState({ status: 'sending', message: 'Aguardando a autorização da SEFAZ…' })
@@ -586,13 +588,24 @@ export function QuickSalePage({ session, company, onExit }: QuickSalePageProps) 
           <AlertTriangleIcon className="h-7 w-7" />
         </span>
         <p className="max-w-sm text-[15px] font-semibold text-[var(--ink)]">{blockedMessage}</p>
-        <button
-          type="button"
-          onClick={onExit}
-          className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]"
-        >
-          Voltar
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onExit}
+            className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+          >
+            Voltar
+          </button>
+          {onOpenCashRegister && (
+            <button
+              type="button"
+              onClick={onOpenCashRegister}
+              className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white hover:bg-[var(--blue-700)]"
+            >
+              Abrir caixa
+            </button>
+          )}
+        </div>
       </div>
     )
   }

@@ -1,17 +1,26 @@
-import { GridIcon, SettingsIcon, CoinIcon } from '../icons'
+import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon } from '../icons'
 
-export type PdvScreen = 'tables' | 'settings' | 'quick-sale'
+export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register'
 
 interface SidebarProps {
   screen: PdvScreen
   onNavigate: (screen: PdvScreen) => void
   showTables?: boolean
   showQuickSale?: boolean
+  showNfce?: boolean
+  showCashRegister?: boolean
 }
 
 // Só aparece em telas largas (desktop) - no celular/tablet estreito a
 // navegação fica no botão de engrenagem dentro do próprio TableGrid.
-export function Sidebar({ screen, onNavigate, showTables = true, showQuickSale = false }: SidebarProps) {
+export function Sidebar({
+  screen,
+  onNavigate,
+  showTables = true,
+  showQuickSale = false,
+  showNfce = false,
+  showCashRegister = false,
+}: SidebarProps) {
   return (
     <nav className="hidden w-16 flex-none flex-col items-center gap-2 border-r border-[var(--border)] bg-[var(--surface)] py-4 md:flex">
       {showTables && (
@@ -42,6 +51,36 @@ export function Sidebar({ screen, onNavigate, showTables = true, showQuickSale =
         >
           <CoinIcon className="h-4 w-4" />
           Venda
+        </button>
+      )}
+      {showNfce && (
+        <button
+          type="button"
+          onClick={() => onNavigate('nfce')}
+          title="NFC-e"
+          className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold transition ${
+            screen === 'nfce'
+              ? 'bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]'
+          }`}
+        >
+          <FileTextIcon className="h-4 w-4" />
+          NFC-e
+        </button>
+      )}
+      {showCashRegister && (
+        <button
+          type="button"
+          onClick={() => onNavigate('cash-register')}
+          title="Caixa"
+          className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold transition ${
+            screen === 'cash-register'
+              ? 'bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]'
+          }`}
+        >
+          <WalletIcon className="h-4 w-4" />
+          Caixa
         </button>
       )}
       <button

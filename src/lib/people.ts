@@ -24,3 +24,13 @@ export function searchPeople(token: string, companyId: string, search: string) {
     token
   ).then((res) => res.data)
 }
+
+// Gerentes (role 6) e operadores (role 7) pra abertura/fechamento de caixa -
+// mesmos papéis que o CashRegisterService valida no backend.
+export function fetchPeopleByRole(token: string, companyId: string, role: 6 | 7) {
+  return apiGet<Paginated<PersonRecord>>(
+    '/people',
+    { companyId, roles: `{${role}}`, limit: '50' },
+    token
+  ).then((res) => res.data)
+}

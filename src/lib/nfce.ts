@@ -10,9 +10,15 @@ export interface NfceResult {
 
 // Mesmo fluxo da NF-e no administrativo: gera a nota (modelo 65) a partir da
 // venda e coloca na fila de envio - o retorno é "enviada pra processamento",
-// a autorização em si aparece depois em Notas Fiscais.
-export function generateNfceFromSale(token: string, saleId: string) {
-  return apiPost<NfceResult>(`/nfe/generate-nfce-from-sale/${saleId}`, {}, token)
+// a autorização em si aparece depois em Notas Fiscais. terminalId (opcional)
+// é o terminal escolhido no PDV - quando ele tem servidor local próprio, a
+// nota já nasce vinculada a ele e o envio usa o link desse terminal.
+export function generateNfceFromSale(token: string, saleId: string, terminalId?: string | null) {
+  return apiPost<NfceResult>(
+    `/nfe/generate-nfce-from-sale/${saleId}`,
+    terminalId ? { terminal_id: terminalId } : {},
+    token
+  )
 }
 
 // O backend devolve { message, errors: [{ message }] } quando o cadastro tem
@@ -92,12 +98,50 @@ export interface NfceHistoryItem {
   saleId?: string | null
   data_emissao?: string | null
   createdAt?: string
+  valor_total?: number | null
+  protocolo?: string | null
   people?: { id: string; name: string } | null
 }
 
 interface Paginated<T> {
   data: T[]
   meta: { total: number; per_page: number; current_page: number; last_page: number }
+}
+
+export interface NfceLogRecord {
+  id: string
+  code?: number
+  phase?: string | null
+  action?: string | null
+  status?: number | null
+  httpStatus?: number | null
+  requestPayload?: string | null
+  responsePayload?: string | null
+  errorMessage?: string | null
+  createdAt?: string
+}
+
+// Mesmo endpoint de "forçar reenvio" do administrativo - reenvia a NFC-e como
+// está (sem criar outra a partir da venda), só serve pra status 1
+// (processando/travada) ou 3 (erro). NFC-e já autorizada (status 2) o
+// backend recusa.
+export function forceSendNfce(token: string, nfeId: string) {
+  return apiPost<{ nfe?: NfceHistoryItem }>(`/nfe/force-send/${nfeId}`, {}, token)
+}
+
+export function fetchNfceLogs(token: string, nfeId: string) {
+  return apiGet<NfceLogRecord[]>(`/nfe/${nfeId}/logs`, {}, token)
+}
+
+// Payload de log costuma vir como string JSON - tenta parsear e reformatar
+// com indentação; se não for JSON válido, mostra cru (mesmo helper do administrativo).
+export function formatNfceLogPayload(value: string | null | undefined): string {
+  if (!value) return ''
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
 }
 
 // Histórico de NFC-e da empresa (modelo 65), mais recente primeiro - mesma
