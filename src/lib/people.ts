@@ -1,4 +1,4 @@
-import { apiGet } from './api'
+import { apiGet, apiPostForm } from './api'
 
 export interface PersonRecord {
   id: string
@@ -33,4 +33,24 @@ export function fetchPeopleByRole(token: string, companyId: string, role: 6 | 7)
     { companyId, roles: `{${role}}`, limit: '50' },
     token
   ).then((res) => res.data)
+}
+
+// Cadastro rápido de cliente na venda rápida (nome, CPF/CNPJ e telefone) — o
+// cadastro completo continua no painel, em Pessoas.
+export function createClient(
+  token: string,
+  companyId: string,
+  data: { name: string; document: string; phone?: string }
+) {
+  const digits = data.document.replace(/\D/g, '')
+  const form = new FormData()
+  form.append('company_id', companyId)
+  form.append('name', data.name.trim())
+  form.append('document', digits)
+  form.append('people_type', digits.length > 11 ? '1' : '0')
+  form.append('roles[]', '2')
+  form.append('status[]', '0')
+  const phone = (data.phone ?? '').replace(/\D/g, '')
+  if (phone) form.append('phone', phone)
+  return apiPostForm<PersonRecord>('/people', form, token)
 }

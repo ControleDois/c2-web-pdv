@@ -7,6 +7,7 @@ import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
+import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import {
   fetchNfceDetails,
   fetchNfceQrCode,
@@ -115,6 +116,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [clientQuery, setClientQuery] = useState('')
   const [clientResults, setClientResults] = useState<PersonRecord[]>([])
   const [clientIndex, setClientIndex] = useState(0)
+  const [creatingClient, setCreatingClient] = useState(false)
 
   const [payments, setPayments] = useState<PaymentLine[]>([])
   const [paymentMethodIndex, setPaymentMethodIndex] = useState(0)
@@ -377,6 +379,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   }
 
   function openClientModal() {
+    setCreatingClient(false)
     setClientQuery('')
     setClientResults([])
     setClientIndex(0)
@@ -929,6 +932,20 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
+            {creatingClient ? (
+              <QuickClientCreate
+                token={session.token.token}
+                companyId={company.id}
+                initialName={clientQuery.trim()}
+                onCancel={() => setCreatingClient(false)}
+                onCreated={(person) => {
+                  setClient(person)
+                  setCreatingClient(false)
+                  setModal(null)
+                }}
+              />
+            ) : (
+              <>
             <div className="flex items-center gap-3 border-b border-[var(--border)] p-4">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)]">
                 <UserIcon className="h-5 w-5" />
@@ -998,6 +1015,17 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                 </table>
               )}
             </div>
+                <div className="flex-none border-t border-[var(--border)] p-3">
+                  <button
+                    type="button"
+                    onClick={() => setCreatingClient(true)}
+                    className="w-full rounded-xl bg-[var(--blue-100)] px-4 py-2.5 text-left text-[13px] font-bold text-[var(--blue-700)] hover:bg-[var(--blue-300)]/30"
+                  >
+                    + Cadastrar novo cliente{clientQuery.trim() ? `: "${clientQuery.trim()}"` : ''}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
