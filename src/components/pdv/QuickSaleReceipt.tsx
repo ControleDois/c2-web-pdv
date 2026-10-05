@@ -24,6 +24,7 @@ export interface ReceiptData {
   total: number
   payments: ReceiptPayment[]
   change: number
+  companySignatureUrl?: string | null
 }
 
 type PrintModel = 'thermal' | 'a4'
@@ -76,6 +77,27 @@ function ReceiptBody({ data, printModel }: QuickSaleReceiptProps) {
           </div>
         )}
       </div>
+
+      {printModel === 'a4' && data.companySignatureUrl && (
+        <div style={{ textAlign: 'center', marginTop: 28 }}>
+          <img
+            src={data.companySignatureUrl}
+            alt=""
+            style={{ display: 'block', margin: '0 auto -10px', maxWidth: 220, maxHeight: 70, objectFit: 'contain' }}
+          />
+          <span
+            style={{
+              display: 'inline-block',
+              borderTop: '1px solid #000',
+              paddingTop: 6,
+              fontWeight: 700,
+              minWidth: 240,
+            }}
+          >
+            {data.companyName}
+          </span>
+        </div>
+      )}
 
       <p style={{ textAlign: 'center', marginTop: 14, fontSize: '11px' }}>Obrigado pela preferência!</p>
     </>

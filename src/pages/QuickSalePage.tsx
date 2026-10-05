@@ -523,6 +523,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         total,
         payments: payments.map((p) => ({ name: p.name, amount: p.amount })),
         change,
+        companySignatureUrl:
+          typeof config?.autentique_signer_signature_url === 'string' ? config.autentique_signer_signature_url : null,
       }
       setReceipt(receiptData)
 
