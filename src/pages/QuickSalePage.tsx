@@ -17,6 +17,7 @@ import {
   type NfceDetails,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
+import { DirectPrint } from '../components/pdv/DirectPrint'
 import { formatCurrency } from '../lib/format'
 import { ApiError } from '../lib/api'
 import {
@@ -128,6 +129,9 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
   const [savedSale, setSavedSale] = useState<{ id: string; code?: number } | null>(null)
   const [nfceState, setNfceState] = useState<NfceState | null>(null)
+  // Impressão direta (sem preview): o que está sendo impresso agora.
+  const [printJob, setPrintJob] = useState<null | 'receipt' | 'nfce'>(null)
+  const directPrint = Boolean(config?.quick_sale_direct_print)
   // Erro de NFC-e que sobrevive ao reset da venda (o operador pode fechar o
   // comprovante antes do envio terminar) - avisa na tela inicial.
   const [nfceNotice, setNfceNotice] = useState<string | null>(null)
@@ -446,6 +450,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         details,
         qrCodeUrl: qrCode?.url ?? null,
       })
+      // Impressão direta: a NFC-e autorizada já sai na impressora, sem mostrar o cupom na tela.
+      if (directPrint && details) {
+        setModal(null)
+        setPrintJob('nfce')
+      }
     } catch (err) {
       const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFC-e.' : nfceErrorMessage(err)
       setNfceState({ status: 'error', message })
@@ -454,6 +463,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   }
 
   function proceedAfterSale() {
+    if (directPrint) {
+      setModal(null)
+      setPrintJob('receipt')
+      return
+    }
     setModal(config?.quick_sale_ask_print_preview ? 'ask-preview' : 'receipt')
   }
 
@@ -1323,6 +1337,34 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             )}
           </div>
         </div>
+      )}
+
+      {printJob && (
+        <>
+          <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-[var(--surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ink)] shadow-xl print-hide">
+            Imprimindo{typeof config?.quick_sale_printer_name === 'string' && config.quick_sale_printer_name ? ` em ${config.quick_sale_printer_name}` : ''}…
+          </div>
+          {printJob === 'receipt' && receipt && (
+            <DirectPrint
+              onDone={() => {
+                setPrintJob(null)
+                closeReceiptAndReset()
+              }}
+            >
+              <QuickSalePrintPortal data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
+            </DirectPrint>
+          )}
+          {printJob === 'nfce' && nfceState?.details && (
+            <DirectPrint
+              onDone={() => {
+                setPrintJob(null)
+                closeReceiptAndReset()
+              }}
+            >
+              <NfcePrintPortal nfce={nfceState.details} qrCodeUrl={nfceState.qrCodeUrl ?? null} />
+            </DirectPrint>
+          )}
+        </>
       )}
 
       {modal === 'ask-preview' && (
