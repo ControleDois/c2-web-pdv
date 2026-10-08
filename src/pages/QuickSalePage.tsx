@@ -18,9 +18,9 @@ import {
   type NfceDetails,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
-import { DirectPrint } from '../components/pdv/DirectPrint'
 import { formatCurrency } from '../lib/format'
 import { buildNfceDocument, buildQuickSaleDocument, createPrintJob } from '../lib/printing'
+import { issueSaleTokens } from '../lib/saleTokens'
 import { ApiError } from '../lib/api'
 import {
   ChevronLeftIcon,
@@ -132,9 +132,6 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
   const [savedSale, setSavedSale] = useState<{ id: string; code?: number } | null>(null)
   const [nfceState, setNfceState] = useState<NfceState | null>(null)
-  // Impressão direta (sem preview): o que está sendo impresso agora.
-  const [printJob, setPrintJob] = useState<null | 'receipt' | 'nfce'>(null)
-  const directPrint = Boolean(config?.quick_sale_direct_print)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
   const receiptPrinterId = config?.quick_sale_receipt_printer_id || null
@@ -143,6 +140,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // no mesmo instante em que o estado `receipt` é gravado (ainda não visível).
   const receiptRef = useRef<ReceiptData | null>(null)
   const [printerNotice, setPrinterNotice] = useState<string | null>(null)
+  const [tokenNotice, setTokenNotice] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(null)
   // Erro de NFC-e que sobrevive ao reset da venda (o operador pode fechar o
   // comprovante antes do envio terminar) - avisa na tela inicial.
   const [nfceNotice, setNfceNotice] = useState<string | null>(null)
@@ -475,11 +473,6 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           return
         }
       }
-      // Impressão direta pelo navegador (modo quiosque): sai sozinha, sem mostrar o cupom na tela.
-      else if (directPrint && details) {
-        setModal(null)
-        setPrintJob('nfce')
-      }
     } catch (err) {
       const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFC-e.' : nfceErrorMessage(err)
       setNfceState({ status: 'error', message })
@@ -521,11 +514,6 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       } else {
         setModal('receipt')
       }
-      return
-    }
-    if (directPrint) {
-      setModal(null)
-      setPrintJob('receipt')
       return
     }
     setModal(config?.quick_sale_ask_print_preview ? 'ask-preview' : 'receipt')
@@ -605,6 +593,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       }
       receiptRef.current = receiptData
       setReceipt(receiptData)
+      void issueTokensFor(sale.id)
 
       const saved = { id: sale.id, code: sale.code }
       setSavedSale(saved)
@@ -631,6 +620,36 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     const timer = setTimeout(() => setPrinterNotice(null), 8000)
     return () => clearTimeout(timer)
   }, [printerNotice])
+
+  useEffect(() => {
+    if (!tokenNotice) return
+    const timer = setTimeout(() => setTokenNotice(null), 6000)
+    return () => clearTimeout(timer)
+  }, [tokenNotice])
+
+  // Fichas dos produtos marcados (uma por unidade, com código de barras): o
+  // sistema emite e manda imprimir na impressora do comprovante. Falha aqui
+  // não atrapalha a venda, só avisa; as fichas emitidas podem ser reimpressas
+  // em Impressões.
+  async function issueTokensFor(saleId: string) {
+    try {
+      const result = await issueSaleTokens(session.token.token, company.id, saleId)
+      if (!result.tokens || result.reason === 'already_issued') return
+      if (result.printed) {
+        setTokenNotice({ text: `${result.tokens} ficha${result.tokens === 1 ? '' : 's'} enviada${result.tokens === 1 ? '' : 's'} para a impressora.`, tone: 'ok' })
+      } else {
+        setTokenNotice({
+          text: `${result.tokens} ficha${result.tokens === 1 ? '' : 's'} emitida${result.tokens === 1 ? '' : 's'}, mas sem impressora configurada para imprimir. Configure a impressora do comprovante.`,
+          tone: 'warn',
+        })
+      }
+    } catch (err) {
+      setTokenNotice({
+        text: `Não foi possível emitir as fichas desta venda: ${err instanceof ApiError ? err.message : 'tente de novo.'}`,
+        tone: 'warn',
+      })
+    }
+  }
 
   function closeReceiptAndReset() {
     setSavedSale(null)
@@ -1423,6 +1442,17 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </div>
       )}
 
+      {tokenNotice && (
+        <div
+          className={`fixed bottom-16 left-1/2 z-[60] max-w-md -translate-x-1/2 cursor-pointer rounded-xl px-4 py-2.5 text-center text-[13px] font-semibold text-white shadow-xl print-hide ${
+            tokenNotice.tone === 'ok' ? 'bg-[var(--green-600)]' : 'bg-[var(--amber-500)]'
+          }`}
+          onClick={() => setTokenNotice(null)}
+        >
+          {tokenNotice.text}
+        </div>
+      )}
+
       {printerNotice && (
         <div
           className="fixed bottom-4 left-1/2 z-[60] max-w-md -translate-x-1/2 cursor-pointer rounded-xl bg-[var(--red-500)] px-4 py-2.5 text-center text-[13px] font-semibold text-white shadow-xl print-hide"
@@ -1430,34 +1460,6 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         >
           {printerNotice}
         </div>
-      )}
-
-      {printJob && (
-        <>
-          <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-[var(--surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ink)] shadow-xl print-hide">
-            Imprimindo{typeof config?.quick_sale_printer_name === 'string' && config.quick_sale_printer_name ? ` em ${config.quick_sale_printer_name}` : ''}…
-          </div>
-          {printJob === 'receipt' && receipt && (
-            <DirectPrint
-              onDone={() => {
-                setPrintJob(null)
-                closeReceiptAndReset()
-              }}
-            >
-              <QuickSalePrintPortal data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
-            </DirectPrint>
-          )}
-          {printJob === 'nfce' && nfceState?.details && (
-            <DirectPrint
-              onDone={() => {
-                setPrintJob(null)
-                closeReceiptAndReset()
-              }}
-            >
-              <NfcePrintPortal nfce={nfceState.details} qrCodeUrl={nfceState.qrCodeUrl ?? null} />
-            </DirectPrint>
-          )}
-        </>
       )}
 
       {modal === 'ask-preview' && (

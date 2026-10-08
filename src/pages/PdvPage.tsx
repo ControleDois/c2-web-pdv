@@ -3,6 +3,7 @@ import { ProductSyncPage } from './ProductSyncPage'
 import { QuickSaleSettingsPage } from './QuickSaleSettingsPage'
 import { QuickSalePage } from './QuickSalePage'
 import { NfceListPage } from './NfceListPage'
+import { TokenRedeemPage } from './TokenRedeemPage'
 import { CashRegisterPage } from './CashRegisterPage'
 import { TerminalPickerPage } from './TerminalPickerPage'
 import { TableGrid } from '../components/pdv/TableGrid'
@@ -269,6 +270,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         showQuickSale={quickSaleEnabled}
         showNfce={nfceEnabled}
         showCashRegister={cashRegisterEnabled}
+        showTokens={quickSaleEnabled}
       />
       <div className="min-h-0 min-w-0 flex-1">
         {screen === 'settings' ? (
@@ -340,6 +342,8 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onOpenCashRegister={cashRegisterEnabled ? () => setScreen('cash-register') : undefined}
             terminalId={activeTerminalId}
           />
+        ) : screen === 'tokens' ? (
+          <TokenRedeemPage session={session} company={company} />
         ) : screen === 'nfce' ? (
           <NfceListPage session={session} company={company} />
         ) : screen === 'cash-register' ? (

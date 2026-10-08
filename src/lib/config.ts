@@ -5,8 +5,6 @@ export interface QuickSaleConfigPayload {
   quick_sale_enabled?: boolean
   quick_sale_only_mode?: boolean
   quick_sale_ask_print_preview?: boolean
-  quick_sale_direct_print?: boolean
-  quick_sale_printer_name?: string
   // Impressoras do cadastro (tabela printers); null = mostra o preview
   quick_sale_receipt_printer_id?: string | null
   quick_sale_nfce_printer_id?: string | null

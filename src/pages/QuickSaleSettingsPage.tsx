@@ -33,20 +33,14 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
   )
 }
 
-// Atalho do navegador do caixa: --kiosk-printing manda a impressão direto para a impressora padrão.
-const KIOSK_COMMAND = `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --kiosk-printing --app=${window.location.origin}`
-
 export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdate }: QuickSaleSettingsPageProps) {
   const config = company.config
   const [enabled, setEnabled] = useState(Boolean(config?.quick_sale_enabled))
   const [onlyMode, setOnlyMode] = useState(Boolean(config?.quick_sale_only_mode))
   const [askPreview, setAskPreview] = useState(Boolean(config?.quick_sale_ask_print_preview))
-  const [directPrint, setDirectPrint] = useState(Boolean(config?.quick_sale_direct_print))
-  const [printerName, setPrinterName] = useState(String(config?.quick_sale_printer_name ?? ''))
   const [receiptPrinterId, setReceiptPrinterId] = useState(config?.quick_sale_receipt_printer_id ?? '')
   const [nfcePrinterId, setNfcePrinterId] = useState(config?.quick_sale_nfce_printer_id ?? '')
   const [printers, setPrinters] = useState<PrinterOption[]>([])
-  const [copied, setCopied] = useState(false)
   const [printModel, setPrintModel] = useState<'thermal' | 'a4'>(config?.quick_sale_print_model ?? 'thermal')
   const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
   const [askPrice, setAskPrice] = useState(Boolean(config?.quick_sale_ask_price))
@@ -74,8 +68,6 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_enabled: enabled,
         quick_sale_only_mode: enabled ? onlyMode : false,
         quick_sale_ask_print_preview: askPreview,
-        quick_sale_direct_print: directPrint,
-        quick_sale_printer_name: printerName.trim(),
         quick_sale_receipt_printer_id: receiptPrinterId || null,
         quick_sale_nfce_printer_id: nfcePrinterId || null,
         quick_sale_print_model: printModel,
@@ -201,67 +193,6 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             <p className="mt-2 text-[11.5px] text-[var(--muted)]">
               Nenhuma impressora cadastrada ainda. Cadastre no administrativo, em menu do usuário → Adicionais → Impressoras.
             </p>
-          )}
-        </div>
-
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[13.5px] font-bold text-[var(--ink)]">Impressão direta pelo navegador (modo quiosque)</p>
-              <p className="text-[11.5px] text-[var(--ink-soft)]">
-                Alternativa sem servidor de impressão: o comprovante e a NFC-e saem na impressora padrão do Windows pelo
-                navegador, sem mostrar a pré-visualização. Vale quando nenhuma impressora acima estiver escolhida
-              </p>
-            </div>
-            <Toggle checked={directPrint} onChange={setDirectPrint} />
-          </div>
-
-          {directPrint && (
-            <div className="mt-4 flex flex-col gap-3 border-t border-[var(--border)] pt-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-[var(--ink-soft)]">Impressora deste caixa (referência)</span>
-                <input
-                  type="text"
-                  value={printerName}
-                  onChange={(event) => setPrinterName(event.target.value)}
-                  placeholder={"Ex: EPSON TM-T20 ou \\\\CAIXA01\\Epson"}
-                  className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
-                />
-                <span className="text-[11.5px] text-[var(--muted)]">
-                  Aparece no aviso "Imprimindo em…". Quem escolhe a impressora é o Windows: deixe a impressora do cupom
-                  como <strong>padrão</strong> do computador.
-                </span>
-              </label>
-
-              <div className="rounded-xl bg-[var(--page)] p-3.5">
-                <p className="text-[12.5px] font-bold text-[var(--ink)]">Para imprimir sem diálogo, abra o Chrome do caixa assim</p>
-                <p className="mt-1 text-[11.5px] text-[var(--ink-soft)]">
-                  Crie um atalho do Chrome (ou Edge) e coloque este destino. Sem isso, o navegador mostra a janela de
-                  impressão normal.
-                </p>
-                <code className="mt-2 block break-all rounded-lg bg-[var(--surface)] px-3 py-2 text-[11.5px] text-[var(--ink)]">
-                  {KIOSK_COMMAND}
-                </code>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(KIOSK_COMMAND)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    } catch {
-                      setCopied(false)
-                    }
-                  }}
-                  className="mt-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]"
-                >
-                  {copied ? 'Copiado!' : 'Copiar comando'}
-                </button>
-                <p className="mt-2 text-[11.5px] text-[var(--muted)]">
-                  Feche todas as janelas do Chrome antes de abrir pelo atalho (a opção só vale numa janela nova).
-                </p>
-              </div>
-            </div>
           )}
         </div>
 

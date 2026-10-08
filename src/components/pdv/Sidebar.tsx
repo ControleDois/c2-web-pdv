@@ -1,6 +1,6 @@
-import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon } from '../icons'
+import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon, QrCodeIcon } from '../icons'
 
-export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register'
+export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register' | 'tokens'
 
 interface SidebarProps {
   screen: PdvScreen
@@ -9,6 +9,7 @@ interface SidebarProps {
   showQuickSale?: boolean
   showNfce?: boolean
   showCashRegister?: boolean
+  showTokens?: boolean
 }
 
 // Só aparece em telas largas (desktop) - no celular/tablet estreito a
@@ -20,6 +21,7 @@ export function Sidebar({
   showQuickSale = false,
   showNfce = false,
   showCashRegister = false,
+  showTokens = false,
 }: SidebarProps) {
   return (
     <nav className="hidden w-16 flex-none flex-col items-center gap-2 border-r border-[var(--border)] bg-[var(--surface)] py-4 md:flex">
@@ -81,6 +83,21 @@ export function Sidebar({
         >
           <WalletIcon className="h-4 w-4" />
           Caixa
+        </button>
+      )}
+      {showTokens && (
+        <button
+          type="button"
+          onClick={() => onNavigate('tokens')}
+          title="Troca de fichas"
+          className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold transition ${
+            screen === 'tokens'
+              ? 'bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]'
+          }`}
+        >
+          <QrCodeIcon className="h-4 w-4" />
+          Fichas
         </button>
       )}
       <button
