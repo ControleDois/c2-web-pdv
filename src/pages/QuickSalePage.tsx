@@ -19,6 +19,7 @@ import {
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
 import { DirectPrint } from '../components/pdv/DirectPrint'
 import { formatCurrency } from '../lib/format'
+import { buildNfceDocument, buildQuickSaleDocument, createPrintJob } from '../lib/printing'
 import { ApiError } from '../lib/api'
 import {
   ChevronLeftIcon,
@@ -132,6 +133,14 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // Impressão direta (sem preview): o que está sendo impresso agora.
   const [printJob, setPrintJob] = useState<null | 'receipt' | 'nfce'>(null)
   const directPrint = Boolean(config?.quick_sale_direct_print)
+  // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
+  // direto nelas; sem impressora configurada, mostra o preview como sempre.
+  const receiptPrinterId = config?.quick_sale_receipt_printer_id || null
+  const nfcePrinterId = config?.quick_sale_nfce_printer_id || null
+  // Comprovante da venda atual guardado também numa ref: a impressão começa
+  // no mesmo instante em que o estado `receipt` é gravado (ainda não visível).
+  const receiptRef = useRef<ReceiptData | null>(null)
+  const [printerNotice, setPrinterNotice] = useState<string | null>(null)
   // Erro de NFC-e que sobrevive ao reset da venda (o operador pode fechar o
   // comprovante antes do envio terminar) - avisa na tela inicial.
   const [nfceNotice, setNfceNotice] = useState<string | null>(null)
@@ -450,8 +459,22 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         details,
         qrCodeUrl: qrCode?.url ?? null,
       })
-      // Impressão direta: a NFC-e autorizada já sai na impressora, sem mostrar o cupom na tela.
-      if (directPrint && details) {
+      // Impressora cadastrada: a NFC-e autorizada vai direto para ela. Se o envio
+      // falhar, o cupom continua na tela para imprimir pelo navegador.
+      if (nfcePrinterId && details) {
+        const sent = await sendToPrinter(
+          nfcePrinterId,
+          `NFC-e nº ${details.numero}`,
+          buildNfceDocument(details, qrCode?.url ?? null)
+        )
+        if (sent) {
+          setModal(null)
+          closeReceiptAndReset()
+          return
+        }
+      }
+      // Impressão direta pelo navegador (modo quiosque): sai sozinha, sem mostrar o cupom na tela.
+      else if (directPrint && details) {
         setModal(null)
         setPrintJob('nfce')
       }
@@ -462,7 +485,42 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     }
   }
 
-  function proceedAfterSale() {
+  // Manda o documento para a impressora cadastrada. Se não der (servidor de
+  // impressão fora do ar não é erro aqui - o trabalho fica na fila), o
+  // operador continua com o preview para imprimir pelo navegador.
+  async function sendToPrinter(printerId: string, title: string, document: ReturnType<typeof buildQuickSaleDocument>) {
+    try {
+      await createPrintJob(session.token.token, {
+        company_id: company.id,
+        printer_id: printerId,
+        title,
+        payload: document,
+      })
+      return true
+    } catch (err) {
+      setPrinterNotice(
+        `Não foi possível enviar para a impressora: ${err instanceof ApiError ? err.message : 'tente novamente.'}`
+      )
+      return false
+    }
+  }
+
+  async function proceedAfterSale() {
+    const currentReceipt = receiptRef.current ?? receipt
+    if (receiptPrinterId && currentReceipt) {
+      setModal(null)
+      const sent = await sendToPrinter(
+        receiptPrinterId,
+        `Venda rápida${currentReceipt.code ? ` #${currentReceipt.code}` : ''}`,
+        buildQuickSaleDocument(currentReceipt)
+      )
+      if (sent) {
+        closeReceiptAndReset()
+      } else {
+        setModal('receipt')
+      }
+      return
+    }
     if (directPrint) {
       setModal(null)
       setPrintJob('receipt')
@@ -543,6 +601,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         companySignatureUrl:
           typeof config?.autentique_signer_signature_url === 'string' ? config.autentique_signer_signature_url : null,
       }
+      receiptRef.current = receiptData
       setReceipt(receiptData)
 
       const saved = { id: sale.id, code: sale.code }
@@ -564,6 +623,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       setSubmitting(false)
     }
   }
+
+  useEffect(() => {
+    if (!printerNotice) return
+    const timer = setTimeout(() => setPrinterNotice(null), 8000)
+    return () => clearTimeout(timer)
+  }, [printerNotice])
 
   function closeReceiptAndReset() {
     setSavedSale(null)
@@ -1336,6 +1401,15 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {printerNotice && (
+        <div
+          className="fixed bottom-4 left-1/2 z-[60] max-w-md -translate-x-1/2 cursor-pointer rounded-xl bg-[var(--red-500)] px-4 py-2.5 text-center text-[13px] font-semibold text-white shadow-xl print-hide"
+          onClick={() => setPrinterNotice(null)}
+        >
+          {printerNotice}
         </div>
       )}
 

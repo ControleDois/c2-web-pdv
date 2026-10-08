@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { updateConfig } from '../lib/config'
+import { fetchActivePrinters, type PrinterOption } from '../lib/printing'
 import { ApiError } from '../lib/api'
 import type { NfceMode } from '../lib/nfce'
 import { ChevronLeftIcon, CheckCircleIcon, CoinIcon, PrinterIcon } from '../components/icons'
@@ -42,6 +43,9 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [askPreview, setAskPreview] = useState(Boolean(config?.quick_sale_ask_print_preview))
   const [directPrint, setDirectPrint] = useState(Boolean(config?.quick_sale_direct_print))
   const [printerName, setPrinterName] = useState(String(config?.quick_sale_printer_name ?? ''))
+  const [receiptPrinterId, setReceiptPrinterId] = useState(config?.quick_sale_receipt_printer_id ?? '')
+  const [nfcePrinterId, setNfcePrinterId] = useState(config?.quick_sale_nfce_printer_id ?? '')
+  const [printers, setPrinters] = useState<PrinterOption[]>([])
   const [copied, setCopied] = useState(false)
   const [printModel, setPrintModel] = useState<'thermal' | 'a4'>(config?.quick_sale_print_model ?? 'thermal')
   const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
@@ -50,6 +54,12 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetchActivePrinters(session.token.token, company.id)
+      .then(setPrinters)
+      .catch(() => setPrinters([]))
+  }, [session.token.token, company.id])
 
   async function handleSave() {
     if (!config?.id) {
@@ -66,6 +76,8 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_ask_print_preview: askPreview,
         quick_sale_direct_print: directPrint,
         quick_sale_printer_name: printerName.trim(),
+        quick_sale_receipt_printer_id: receiptPrinterId || null,
+        quick_sale_nfce_printer_id: nfcePrinterId || null,
         quick_sale_print_model: printModel,
         quick_sale_ask_quantity: askQuantity,
         quick_sale_ask_price: askPrice,
@@ -155,12 +167,50 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         </div>
 
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="mb-3">
+            <p className="text-[13.5px] font-bold text-[var(--ink)]">Impressoras (impressão direta)</p>
+            <p className="text-[11.5px] text-[var(--ink-soft)]">
+              Escolha em qual impressora sai cada documento. Quem imprime é o servidor de impressão instalado no computador
+              do caixa, sem abrir o preview. Sem impressora escolhida, o PDV mostra a pré-visualização como antes. As impressoras
+              são cadastradas no administrativo (menu Impressoras).
+            </p>
+          </div>
+          <div className="flex flex-col gap-3">
+            {[
+              { label: 'Impressora do comprovante da venda', value: receiptPrinterId, set: setReceiptPrinterId },
+              { label: 'Impressora da NFC-e', value: nfcePrinterId, set: setNfcePrinterId },
+            ].map((field) => (
+              <label key={field.label} className="flex flex-col gap-1.5">
+                <span className="text-[12px] font-semibold text-[var(--ink-soft)]">{field.label}</span>
+                <select
+                  value={field.value}
+                  onChange={(event) => field.set(event.target.value)}
+                  className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
+                >
+                  <option value="">Mostrar preview (sem impressora)</option>
+                  {printers.map((printer) => (
+                    <option key={printer.id} value={printer.id}>
+                      {printer.name} — {printer.path}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          {printers.length === 0 && (
+            <p className="mt-2 text-[11.5px] text-[var(--muted)]">
+              Nenhuma impressora cadastrada ainda. Cadastre no administrativo, em Impressoras.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-[13.5px] font-bold text-[var(--ink)]">Impressão direta (sem preview)</p>
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">Impressão direta pelo navegador (modo quiosque)</p>
               <p className="text-[11.5px] text-[var(--ink-soft)]">
-                Ao finalizar a venda, o comprovante e a NFC-e autorizada saem na impressora sozinhos, sem mostrar a
-                pré-visualização
+                Alternativa sem servidor de impressão: o comprovante e a NFC-e saem na impressora padrão do Windows pelo
+                navegador, sem mostrar a pré-visualização. Vale quando nenhuma impressora acima estiver escolhida
               </p>
             </div>
             <Toggle checked={directPrint} onChange={setDirectPrint} />
