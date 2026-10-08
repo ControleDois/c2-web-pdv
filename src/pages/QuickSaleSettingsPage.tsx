@@ -172,7 +172,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             <p className="text-[11.5px] text-[var(--ink-soft)]">
               Escolha em qual impressora sai cada documento. Quem imprime é o servidor de impressão instalado no computador
               do caixa, sem abrir o preview. Sem impressora escolhida, o PDV mostra a pré-visualização como antes. As impressoras
-              são cadastradas no administrativo (menu Impressoras).
+              são cadastradas no administrativo (menu do usuário → Adicionais → Impressoras).
             </p>
           </div>
           <div className="flex flex-col gap-3">
@@ -199,7 +199,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
           </div>
           {printers.length === 0 && (
             <p className="mt-2 text-[11.5px] text-[var(--muted)]">
-              Nenhuma impressora cadastrada ainda. Cadastre no administrativo, em Impressoras.
+              Nenhuma impressora cadastrada ainda. Cadastre no administrativo, em menu do usuário → Adicionais → Impressoras.
             </p>
           )}
         </div>
