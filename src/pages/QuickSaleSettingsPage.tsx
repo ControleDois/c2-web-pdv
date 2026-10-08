@@ -162,15 +162,15 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
           <div className="mb-3">
             <p className="text-[13.5px] font-bold text-[var(--ink)]">Impressoras (impressão direta)</p>
             <p className="text-[11.5px] text-[var(--ink-soft)]">
-              Escolha em qual impressora sai cada documento. Quem imprime é o servidor de impressão instalado no computador
-              do caixa, sem abrir o preview. Sem impressora escolhida, o PDV mostra a pré-visualização como antes. As impressoras
-              são cadastradas no administrativo (menu do usuário → Adicionais → Impressoras).
+              Impressoras padrão da empresa, usadas quando o PDV não está em um terminal. Quando o PDV está em um terminal,
+              valem as impressoras dele (administrativo → Configurações → Terminais). Sem impressora, o PDV mostra a
+              pré-visualização. As impressoras são cadastradas no administrativo (menu do usuário → Adicionais → Impressoras).
             </p>
           </div>
           <div className="flex flex-col gap-3">
             {[
-              { label: 'Impressora do comprovante da venda', value: receiptPrinterId, set: setReceiptPrinterId },
-              { label: 'Impressora da NFC-e', value: nfcePrinterId, set: setNfcePrinterId },
+              { label: 'Impressora padrão do comprovante e das fichas', value: receiptPrinterId, set: setReceiptPrinterId },
+              { label: 'Impressora padrão da NFC-e', value: nfcePrinterId, set: setNfcePrinterId },
             ].map((field) => (
               <label key={field.label} className="flex flex-col gap-1.5">
                 <span className="text-[12px] font-semibold text-[var(--ink-soft)]">{field.label}</span>

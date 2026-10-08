@@ -19,7 +19,9 @@ import {
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
 import { formatCurrency } from '../lib/format'
-import { buildNfceDocument, buildQuickSaleDocument, createPrintJob } from '../lib/printing'
+import { buildNfceDocument, buildQuickSaleDocument, createPrintJob, type PrintDocument } from '../lib/printing'
+import type { PdvPrinters } from '../lib/terminal'
+import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { issueSaleTokens } from '../lib/saleTokens'
 import { ApiError } from '../lib/api'
 import {
@@ -45,6 +47,7 @@ interface QuickSalePageProps {
   onExit: () => void
   onOpenCashRegister?: () => void
   terminalId?: string
+  printers: PdvPrinters
 }
 
 interface CartItem {
@@ -87,7 +90,7 @@ function parseAmountInput(value: string): number {
   return Number.isNaN(num) ? 0 : num
 }
 
-export function QuickSalePage({ session, company, onExit, onOpenCashRegister, terminalId }: QuickSalePageProps) {
+export function QuickSalePage({ session, company, onExit, onOpenCashRegister, terminalId, printers }: QuickSalePageProps) {
   const myPerson = useMyCompanyPerson(session, company)
   const config = company.config
 
@@ -134,8 +137,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [nfceState, setNfceState] = useState<NfceState | null>(null)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
-  const receiptPrinterId = config?.quick_sale_receipt_printer_id || null
-  const nfcePrinterId = config?.quick_sale_nfce_printer_id || null
+  const { receiptPrinterId, nfcePrinterId } = printers
+  const [tokenPreview, setTokenPreview] = useState<PrintDocument[] | null>(null)
   // Comprovante da venda atual guardado também numa ref: a impressão começa
   // no mesmo instante em que o estado `receipt` é gravado (ainda não visível).
   const receiptRef = useRef<ReceiptData | null>(null)
@@ -633,9 +636,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // em Impressões.
   async function issueTokensFor(saleId: string) {
     try {
-      const result = await issueSaleTokens(session.token.token, company.id, saleId)
+      const result = await issueSaleTokens(session.token.token, company.id, saleId, receiptPrinterId)
       if (!result.tokens || result.reason === 'already_issued') return
-      if (result.printed) {
+      if (!result.printed && result.documents?.length) {
+        setTokenPreview(result.documents)
+      } else if (result.printed) {
         setTokenNotice({ text: `${result.tokens} ficha${result.tokens === 1 ? '' : 's'} enviada${result.tokens === 1 ? '' : 's'} para a impressora.`, tone: 'ok' })
       } else {
         setTokenNotice({
@@ -1452,6 +1457,13 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           {tokenNotice.text}
         </div>
       )}
+
+      <PrintPreviewModal
+        open={tokenPreview !== null}
+        title="Fichas da venda"
+        documents={tokenPreview ?? []}
+        onClose={() => setTokenPreview(null)}
+      />
 
       {printerNotice && (
         <div

@@ -13,6 +13,9 @@ export interface CompanyTerminalOption {
   hasApiUrl: boolean
   nfeActive: boolean
   nfceActive: boolean
+  // Impressoras do cadastro vinculadas a este terminal (null = sem impressora: o PDV mostra o preview)
+  receiptPrinterId?: string | null
+  nfcePrinterId?: string | null
 }
 
 export function fetchCompanyTerminals(token: string, companyId: string) {
@@ -42,4 +45,12 @@ export function saveSelectedTerminalId(companyId: string, terminalId: string | n
     // localStorage indisponível (aba anônima etc) - segue sem persistir, só
     // pede de novo na próxima vez que o PDV abrir.
   }
+}
+
+// Impressoras que o PDV usa agora. Num terminal, só as dele (sem impressora
+// vinculada = preview na tela); sem terminal, as padrão da empresa em
+// Ajustes > Venda Rápida.
+export interface PdvPrinters {
+  receiptPrinterId: string | null
+  nfcePrinterId: string | null
 }

@@ -1,6 +1,6 @@
-import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon, QrCodeIcon } from '../icons'
+import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon, QrCodeIcon, ClockIcon } from '../icons'
 
-export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register' | 'tokens'
+export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register' | 'tokens' | 'sales'
 
 interface SidebarProps {
   screen: PdvScreen
@@ -10,6 +10,7 @@ interface SidebarProps {
   showNfce?: boolean
   showCashRegister?: boolean
   showTokens?: boolean
+  showSalesHistory?: boolean
 }
 
 // Só aparece em telas largas (desktop) - no celular/tablet estreito a
@@ -22,6 +23,7 @@ export function Sidebar({
   showNfce = false,
   showCashRegister = false,
   showTokens = false,
+  showSalesHistory = false,
 }: SidebarProps) {
   return (
     <nav className="hidden w-16 flex-none flex-col items-center gap-2 border-r border-[var(--border)] bg-[var(--surface)] py-4 md:flex">
@@ -53,6 +55,21 @@ export function Sidebar({
         >
           <CoinIcon className="h-4 w-4" />
           Venda
+        </button>
+      )}
+      {showSalesHistory && (
+        <button
+          type="button"
+          onClick={() => onNavigate('sales')}
+          title="Vendas e reimpressão"
+          className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold transition ${
+            screen === 'sales'
+              ? 'bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]'
+          }`}
+        >
+          <ClockIcon className="h-4 w-4" />
+          Histórico
         </button>
       )}
       {showNfce && (

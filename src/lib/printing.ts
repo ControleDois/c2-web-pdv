@@ -102,10 +102,11 @@ const chaveFormatada = (chave: string) =>
     .trim()
 
 // Comprovante da venda rápida (mesmo conteúdo do QuickSaleReceipt, em bobina).
-export function buildQuickSaleDocument(data: ReceiptData): PrintDocument {
-  const lines: PrintLine[] = [
-    { t: 'text', v: data.companyName, align: 'center', bold: true },
-  ]
+// secondCopy marca "2ª VIA" no topo (reimpressão pela tela de vendas).
+export function buildQuickSaleDocument(data: ReceiptData, options: { secondCopy?: boolean } = {}): PrintDocument {
+  const lines: PrintLine[] = []
+  if (options.secondCopy) lines.push({ t: 'text', v: '*** 2ª VIA ***', align: 'center', bold: true })
+  lines.push({ t: 'text', v: data.companyName, align: 'center', bold: true })
   if (data.companyDocument) lines.push({ t: 'text', v: data.companyDocument, align: 'center' })
   lines.push(
     { t: 'text', v: `Venda Rápida${data.code ? ` · #${data.code}` : ''}`, align: 'center' },
@@ -211,4 +212,36 @@ export function buildNfceDocument(nfce: NfceDetails, qrCodeUrl: string | null): 
 
   lines.push({ t: 'feed', n: 2 }, { t: 'cut' })
   return { lines }
+}
+
+// ---- Vendas rápidas recentes (tela de vendas: reimprimir comprovante, NFC-e e fichas)
+
+export interface QuickSaleItem {
+  id: string
+  code: number
+  created_at: string
+  client_name: string | null
+  total: number
+  items: { name: string; quantity: number; unit_value: number; total: number }[]
+  payments: { name: string; amount: number }[]
+  // status: 1 processando, 2 autorizada, 3 erro
+  nfce: { id: string; status: number; numero: number | null } | null
+  tokens: { issued: number; redeemed: number; canceled: number }
+}
+
+export function fetchQuickSales(token: string, companyId: string, options: { search?: string; limit?: number } = {}) {
+  return apiGet<QuickSaleItem[]>(
+    '/pdv/quick-sales',
+    { companyId, search: options.search, limit: String(options.limit ?? 40) },
+    token
+  )
+}
+
+// Reimprime as fichas que ainda valem (mesmos códigos).
+export function reprintSaleTokens(token: string, companyId: string, saleId: string, printerId: string | null) {
+  return apiPost<{ tokens: number; printed: boolean; jobs?: number; documents?: PrintDocument[] }>(
+    '/sale-token/reprint',
+    { company_id: companyId, sale_id: saleId, printer_id: printerId },
+    token
+  )
 }

@@ -4,6 +4,7 @@ import { QuickSaleSettingsPage } from './QuickSaleSettingsPage'
 import { QuickSalePage } from './QuickSalePage'
 import { NfceListPage } from './NfceListPage'
 import { TokenRedeemPage } from './TokenRedeemPage'
+import { SalesHistoryPage } from './SalesHistoryPage'
 import { CashRegisterPage } from './CashRegisterPage'
 import { TerminalPickerPage } from './TerminalPickerPage'
 import { TableGrid } from '../components/pdv/TableGrid'
@@ -19,6 +20,7 @@ import {
   loadSelectedTerminalId,
   saveSelectedTerminalId,
   type CompanyTerminalOption,
+  type PdvPrinters,
 } from '../lib/terminal'
 import type { FoodTable } from '../lib/foodTypes'
 import type { AuthCompany, AuthSession } from '../lib/auth'
@@ -100,6 +102,17 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const showTerminalPicker =
     terminalsLoaded && terminals.length > 0 && (!selectedTerminalId || terminalNeedsReselect)
   const activeTerminalId = selectedTerminal?.id
+  // Com terminal escolhido, imprime só nas impressoras dele (sem vínculo = preview);
+  // sem terminal, vale o padrão da empresa.
+  const printers: PdvPrinters = selectedTerminal
+    ? {
+        receiptPrinterId: selectedTerminal.receiptPrinterId || null,
+        nfcePrinterId: selectedTerminal.nfcePrinterId || null,
+      }
+    : {
+        receiptPrinterId: company.config?.quick_sale_receipt_printer_id || null,
+        nfcePrinterId: company.config?.quick_sale_nfce_printer_id || null,
+      }
 
   // Se o ajuste "somente venda rápida" for ligado/desligado enquanto o PDV
   // já está aberto (ex: em outra aba), mantém a tela coerente com o modo.
@@ -271,6 +284,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         showNfce={nfceEnabled}
         showCashRegister={cashRegisterEnabled}
         showTokens={quickSaleEnabled}
+        showSalesHistory={quickSaleEnabled}
       />
       <div className="min-h-0 min-w-0 flex-1">
         {screen === 'settings' ? (
@@ -341,7 +355,10 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onExit={() => setScreen(homeScreen)}
             onOpenCashRegister={cashRegisterEnabled ? () => setScreen('cash-register') : undefined}
             terminalId={activeTerminalId}
+            printers={printers}
           />
+        ) : screen === 'sales' ? (
+          <SalesHistoryPage session={session} company={company} printers={printers} />
         ) : screen === 'tokens' ? (
           <TokenRedeemPage session={session} company={company} />
         ) : screen === 'nfce' ? (

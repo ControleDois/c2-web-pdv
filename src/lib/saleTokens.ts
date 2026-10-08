@@ -1,4 +1,5 @@
 import { apiPost } from './api'
+import type { PrintDocument } from './printing'
 
 // Fichas de venda (distribuidora): cada unidade de produto marcado imprime uma
 // ficha com código de barras; o caixa bipa a ficha na troca e o sistema dá baixa.
@@ -10,10 +11,18 @@ export interface IssueTokensResult {
   jobs?: number
   // already_issued | no_token_products | no_printer
   reason?: string
+  // Sem impressora: o que sairia no papel, para o PDV mostrar o preview
+  documents?: PrintDocument[]
 }
 
-export function issueSaleTokens(token: string, companyId: string, saleId: string) {
-  return apiPost<IssueTokensResult>('/sale-token/issue', { company_id: companyId, sale_id: saleId }, token)
+// printerId null = este terminal não tem impressora: o sistema só emite as
+// fichas e devolve os documentos para o preview.
+export function issueSaleTokens(token: string, companyId: string, saleId: string, printerId: string | null) {
+  return apiPost<IssueTokensResult>(
+    '/sale-token/issue',
+    { company_id: companyId, sale_id: saleId, printer_id: printerId },
+    token
+  )
 }
 
 export interface RedeemResult {
