@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { fetchNfceHistory, generateNfceFromSale, nfceErrorMessage, waitNfceOutcome, type NfceHistoryItem } from '../../lib/nfce'
+import {
+  fetchNfceDetails,
+  fetchNfceHistory,
+  fetchNfceQrCode,
+  generateNfceFromSale,
+  nfceErrorMessage,
+  waitNfceOutcome,
+  type NfceHistoryItem,
+} from '../../lib/nfce'
+import { buildNfceDocument, createPrintJob } from '../../lib/printing'
 import { ApiError } from '../../lib/api'
 import { CloseIcon, FileTextIcon, RefreshIcon } from '../icons'
 import type { AuthSession, AuthCompany } from '../../lib/auth'
@@ -8,6 +17,8 @@ interface NfceHistoryModalProps {
   open: boolean
   session: AuthSession
   company: AuthCompany
+  // Impressora da NFC-e (cadastro de impressoras): habilita o botão Imprimir.
+  printerId?: string | null
   onClose: () => void
 }
 
@@ -27,13 +38,14 @@ function formatDateTime(iso?: string | null): string {
 // Histórico das NFC-e geradas pela venda rápida, direto no PDV: pra saber
 // sem sair da tela se saiu autorizada, se ainda está processando, ou qual
 // foi o erro - e tentar de novo sem precisar refazer a venda.
-export function NfceHistoryModal({ open, session, company, onClose }: NfceHistoryModalProps) {
+export function NfceHistoryModal({ open, session, company, printerId, onClose }: NfceHistoryModalProps) {
   const token = session.token.token
   const [items, setItems] = useState<NfceHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryingId, setRetryingId] = useState<string | null>(null)
   const [retryNotice, setRetryNotice] = useState<Record<string, string>>({})
+  const [printingId, setPrintingId] = useState<string | null>(null)
 
   function load() {
     setLoading(true)
@@ -52,6 +64,33 @@ export function NfceHistoryModal({ open, session, company, onClose }: NfceHistor
   }, [open, token, company.id])
 
   if (!open) return null
+
+  // Imprime (ou reimprime) a NFC-e autorizada na impressora cadastrada.
+  async function handlePrint(item: NfceHistoryItem) {
+    if (!printerId || printingId) return
+    setPrintingId(item.id)
+    setRetryNotice((current) => ({ ...current, [item.id]: 'Enviando para a impressora…' }))
+    try {
+      const [details, qrCode] = await Promise.all([
+        fetchNfceDetails(token, item.id),
+        fetchNfceQrCode(token, item.id).catch(() => null),
+      ])
+      await createPrintJob(token, {
+        company_id: company.id,
+        printer_id: printerId,
+        title: `NFC-e nº ${details.numero}`,
+        payload: buildNfceDocument(details, qrCode?.url ?? null),
+      })
+      setRetryNotice((current) => ({ ...current, [item.id]: 'Enviada para a impressora.' }))
+    } catch (err) {
+      setRetryNotice((current) => ({
+        ...current,
+        [item.id]: err instanceof ApiError ? err.message : 'Não foi possível enviar para a impressora.',
+      }))
+    } finally {
+      setPrintingId(null)
+    }
+  }
 
   async function handleRetry(item: NfceHistoryItem) {
     if (!item.saleId || retryingId) return
@@ -154,6 +193,17 @@ export function NfceHistoryModal({ open, session, company, onClose }: NfceHistor
 
                     {retryNotice[item.id] && (
                       <p className="mt-2 text-[11.5px] font-medium text-[var(--ink-soft)]">{retryNotice[item.id]}</p>
+                    )}
+
+                    {item.status === 2 && printerId && (
+                      <button
+                        type="button"
+                        onClick={() => void handlePrint(item)}
+                        disabled={printingId === item.id}
+                        className="mt-2 rounded-lg bg-[var(--blue-500)] px-3 py-1.5 text-[11.5px] font-bold text-white hover:bg-[var(--blue-700)] disabled:opacity-60"
+                      >
+                        {printingId === item.id ? 'Enviando…' : 'Imprimir / reimprimir'}
+                      </button>
                     )}
 
                     {item.status === 3 && item.saleId && (

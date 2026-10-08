@@ -7,6 +7,7 @@ import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
+import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import {
   fetchNfceDetails,
@@ -99,6 +100,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
 
   const [modal, setModal] = useState<Modal>(null)
   const [nfceHistoryOpen, setNfceHistoryOpen] = useState(false)
+  const [printHistoryOpen, setPrintHistoryOpen] = useState(false)
 
   // Fluxo de bipagem/digitação: um único campo sempre focado, que muda de
   // papel conforme o passo (buscar produto -> quantidade -> preço).
@@ -790,6 +792,16 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           >
             <FileTextIcon className="h-3.5 w-3.5" /> NFC-e
           </button>
+          {(receiptPrinterId || nfcePrinterId) && (
+            <button
+              type="button"
+              onClick={() => setPrintHistoryOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[11.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+              title="Impressões enviadas e reimpressão"
+            >
+              <PrinterIcon className="h-3.5 w-3.5" /> Impressões
+            </button>
+          )}
           <div className="text-right">
             <p className="text-[11px] text-[var(--muted)]">Total</p>
             <p className="text-[20px] font-bold text-[var(--ink)]">{formatCurrency(total)}</p>
@@ -797,7 +809,14 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </div>
       </div>
 
-      <NfceHistoryModal open={nfceHistoryOpen} session={session} company={company} onClose={() => setNfceHistoryOpen(false)} />
+      <NfceHistoryModal
+        open={nfceHistoryOpen}
+        session={session}
+        company={company}
+        printerId={nfcePrinterId}
+        onClose={() => setNfceHistoryOpen(false)}
+      />
+      <PrintHistoryModal open={printHistoryOpen} session={session} company={company} onClose={() => setPrintHistoryOpen(false)} />
 
       <div className="flex-none border-b border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="flex items-center gap-2 px-1 pb-2">

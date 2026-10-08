@@ -48,6 +48,30 @@ export function createPrintJob(
   return apiPost<{ id: string }>('/print-job', payload, token)
 }
 
+export interface PrintJobItem {
+  id: string
+  code?: number
+  title?: string | null
+  // 0 na fila, 1 imprimindo, 2 impresso, 3 erro, 4 cancelado
+  status: number
+  error?: string | null
+  created_at?: string
+  printed_at?: string | null
+  printer?: { id: string; name: string } | null
+}
+
+export function fetchPrintJobs(token: string, companyId: string, limit = 30) {
+  return apiGet<{ data: PrintJobItem[] }>('/print-job', { companyId, limit: String(limit) }, token).then(
+    (res) => res.data || []
+  )
+}
+
+// Reimprime uma impressão anterior (cria uma nova, igual à original; a
+// impressora pode ser outra - papel acabou, impressora com defeito).
+export function reprintJob(token: string, jobId: string, printerId?: string) {
+  return apiPost<{ id: string }>(`/print-job/${jobId}/reprint`, { printer_id: printerId }, token)
+}
+
 const money = (value: number | null | undefined) =>
   (Number(value) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
