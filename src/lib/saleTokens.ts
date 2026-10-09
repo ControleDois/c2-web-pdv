@@ -17,10 +17,18 @@ export interface IssueTokensResult {
 
 // printerId null = este terminal não tem impressora: o sistema só emite as
 // fichas e devolve os documentos para o preview.
-export function issueSaleTokens(token: string, companyId: string, saleId: string, printerId: string | null) {
+// checkOnly: só conta quantas fichas a venda geraria (reason 'confirm'), sem emitir nem imprimir -
+// o PDV pergunta ao operador antes de imprimir.
+export function issueSaleTokens(
+  token: string,
+  companyId: string,
+  saleId: string,
+  printerId: string | null,
+  checkOnly = false
+) {
   return apiPost<IssueTokensResult>(
     '/sale-token/issue',
-    { company_id: companyId, sale_id: saleId, printer_id: printerId },
+    { company_id: companyId, sale_id: saleId, printer_id: printerId, check_only: checkOnly || undefined },
     token
   )
 }

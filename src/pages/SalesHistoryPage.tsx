@@ -114,7 +114,9 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
         }
       } else {
         const result = await reprintSaleTokens(token, company.id, sale.id, receiptPrinterId)
-        if (!result.printed && result.documents?.length) {
+        if (result.tokens === 0) {
+          setNotice(sale.id, 'Os produtos desta venda não usam ficha.')
+        } else if (!result.printed && result.documents?.length) {
           setPreview({ title: `Fichas — venda #${sale.code}`, documents: result.documents })
           setNotice(sale.id, '')
         } else {

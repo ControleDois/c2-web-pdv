@@ -139,6 +139,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
   const { receiptPrinterId, nfcePrinterId } = printers
   const [tokenPreview, setTokenPreview] = useState<PrintDocument[] | null>(null)
+  // Pergunta "imprimir as fichas?" depois da venda (só quando algum produto gera ficha).
+  const [tokenAsk, setTokenAsk] = useState<{ saleId: string; count: number } | null>(null)
   // Comprovante da venda atual guardado também numa ref: a impressão começa
   // no mesmo instante em que o estado `receipt` é gravado (ainda não visível).
   const receiptRef = useRef<ReceiptData | null>(null)
@@ -596,7 +598,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       }
       receiptRef.current = receiptData
       setReceipt(receiptData)
-      void issueTokensFor(sale.id)
+      void checkTokensFor(sale.id)
 
       const saved = { id: sale.id, code: sale.code }
       setSavedSale(saved)
@@ -634,6 +636,31 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // sistema emite e manda imprimir na impressora do comprovante. Falha aqui
   // não atrapalha a venda, só avisa; as fichas emitidas podem ser reimpressas
   // em Impressões.
+  // Antes de emitir, confere se a venda gera fichas e pergunta ao operador se quer imprimir:
+  // nem sempre a ficha é necessária. Dizendo "não", nada é emitido e dá para emitir depois em Histórico.
+  async function checkTokensFor(saleId: string) {
+    try {
+      const result = await issueSaleTokens(session.token.token, company.id, saleId, receiptPrinterId, true)
+      if (result.reason === 'confirm' && result.tokens > 0) setTokenAsk({ saleId, count: result.tokens })
+    } catch (err) {
+      setTokenNotice({
+        text: `Não foi possível conferir as fichas desta venda: ${err instanceof ApiError ? err.message : 'tente de novo.'}`,
+        tone: 'warn',
+      })
+    }
+  }
+
+  function answerTokens(print: boolean) {
+    const ask = tokenAsk
+    setTokenAsk(null)
+    if (!ask) return
+    if (print) {
+      void issueTokensFor(ask.saleId)
+    } else {
+      setTokenNotice({ text: 'Fichas não impressas. Para emitir depois, use Histórico → Fichas.', tone: 'warn' })
+    }
+  }
+
   async function issueTokensFor(saleId: string) {
     try {
       const result = await issueSaleTokens(session.token.token, company.id, saleId, receiptPrinterId)
@@ -673,7 +700,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // focado), então não compete com os inputs dos modais.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (phase === 'idle' && modal === null && event.key === 'Enter') {
+      if (phase === 'idle' && modal === null && tokenAsk === null && event.key === 'Enter') {
         event.preventDefault()
         startSale()
       }
@@ -681,7 +708,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, modal])
+  }, [phase, modal, tokenAsk])
 
   if (phase === 'checking') {
     return (
@@ -736,9 +763,76 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     )
   }
 
+  // Avisos e pergunta das fichas: aparecem também na tela "Disponível", pois a venda pode
+  // voltar a ela antes de a resposta chegar.
+  const tokenOverlays = (
+    <>
+      {tokenNotice && (
+        <div
+          className={`fixed bottom-16 left-1/2 z-[60] max-w-md -translate-x-1/2 cursor-pointer rounded-xl px-4 py-2.5 text-center text-[13px] font-semibold text-white shadow-xl print-hide ${
+            tokenNotice.tone === 'ok' ? 'bg-[var(--green-600)]' : 'bg-[var(--amber-500)]'
+          }`}
+          onClick={() => setTokenNotice(null)}
+        >
+          {tokenNotice.text}
+        </div>
+      )}
+
+      {tokenAsk && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+          <div
+            className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
+            tabIndex={-1}
+            ref={(el) => el?.focus()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' || e.key.toUpperCase() === 'N') {
+                e.preventDefault()
+                e.stopPropagation()
+                answerTokens(false)
+              } else if (e.key === 'Enter' || e.key.toUpperCase() === 'S') {
+                e.preventDefault()
+                e.stopPropagation()
+                answerTokens(true)
+              }
+            }}
+          >
+            <p className="text-[14px] font-semibold text-[var(--ink)]">
+              Imprimir {tokenAsk.count} ficha{tokenAsk.count === 1 ? '' : 's'}?
+            </p>
+            <p className="mt-1 text-[12px] text-[var(--ink-soft)]">Uma ficha por unidade dos produtos que usam ficha.</p>
+            <div className="mt-4 flex justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => answerTokens(false)}
+                className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]"
+              >
+                Não (N)
+              </button>
+              <button
+                type="button"
+                onClick={() => answerTokens(true)}
+                className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white"
+              >
+                Sim (S)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <PrintPreviewModal
+        open={tokenPreview !== null}
+        title="Fichas da venda"
+        documents={tokenPreview ?? []}
+        onClose={() => setTokenPreview(null)}
+      />
+    </>
+  )
+
   if (phase === 'idle') {
     return (
       <div className="relative flex h-full flex-col items-center justify-center gap-6 bg-[var(--page)] p-6 text-center">
+        {tokenOverlays}
         <button
           type="button"
           onClick={onExit}
@@ -1447,23 +1541,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </div>
       )}
 
-      {tokenNotice && (
-        <div
-          className={`fixed bottom-16 left-1/2 z-[60] max-w-md -translate-x-1/2 cursor-pointer rounded-xl px-4 py-2.5 text-center text-[13px] font-semibold text-white shadow-xl print-hide ${
-            tokenNotice.tone === 'ok' ? 'bg-[var(--green-600)]' : 'bg-[var(--amber-500)]'
-          }`}
-          onClick={() => setTokenNotice(null)}
-        >
-          {tokenNotice.text}
-        </div>
-      )}
-
-      <PrintPreviewModal
-        open={tokenPreview !== null}
-        title="Fichas da venda"
-        documents={tokenPreview ?? []}
-        onClose={() => setTokenPreview(null)}
-      />
+      {tokenOverlays}
 
       {printerNotice && (
         <div
