@@ -3,6 +3,7 @@ import { LoginPage } from './pages/LoginPage'
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { CompanySelectionPage } from './pages/CompanySelectionPage'
 import { PdvPage } from './pages/PdvPage'
+import { LicenseNotice } from './components/LicenseNotice'
 import { ThemeToggle } from './components/ThemeToggle'
 import { Logo } from './components/Logo'
 import { LogoutIcon, BuildingsIcon } from './components/icons'
@@ -119,6 +120,7 @@ function App() {
             </button>
           </div>
         </header>
+        <LicenseNotice session={session} company={activeCompany} />
         <main className="min-h-0 flex-1">
           <PdvPage session={session} company={activeCompany} onCompanyUpdate={handleCompanyUpdate} />
         </main>
