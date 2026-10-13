@@ -17,6 +17,8 @@ export interface ProductRecord {
   description?: string | null
   barcode?: string | null
   unit?: string | null
+  // Produto avulso: o PDV pede o nome na hora de vender
+  ask_name?: boolean
   categories?: ProductCategoryRef[]
   // Dados fiscais (NFe)
   ncm_id?: string | null

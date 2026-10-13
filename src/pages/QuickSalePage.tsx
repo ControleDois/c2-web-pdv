@@ -65,7 +65,7 @@ interface PaymentLine {
 }
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
-type Step = 'scan' | 'quantity' | 'price'
+type Step = 'scan' | 'name' | 'quantity' | 'price'
 type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
 
 interface NfceState {
@@ -111,6 +111,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [scanQuery, setScanQuery] = useState('')
   const [scanPreview, setScanPreview] = useState<LocalProduct | null>(null)
   const [pendingProduct, setPendingProduct] = useState<LocalProduct | null>(null)
+  // Nome digitado para o produto avulso (ask_name), antes de quantidade e preço.
+  const [nameInput, setNameInput] = useState('')
   const [quantityInput, setQuantityInput] = useState('1')
   const [priceInput, setPriceInput] = useState('')
   const scanInputRef = useRef<HTMLInputElement>(null)
@@ -181,6 +183,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   useEffect(() => {
     if (phase === 'active' && modal === null) {
       scanInputRef.current?.focus()
+      // Nos passos de nome, quantidade e preço o valor já vem selecionado: é só digitar por cima ou dar Enter.
+      if (step !== 'scan') scanInputRef.current?.select()
     }
   }, [phase, modal, step])
 
@@ -217,7 +221,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
 
   function addToCart(product: LocalProduct, quantity: number, unitValue: number) {
     setCart((prev) => {
-      const existingIndex = prev.findIndex((item) => item.productId === product.id)
+      // Produto avulso: cada nome digitado é uma linha própria, nunca soma com outra.
+      const existingIndex = product.ask_name ? -1 : prev.findIndex((item) => item.productId === product.id)
       if (existingIndex >= 0) {
         const next = [...prev]
         next[existingIndex] = {
@@ -262,10 +267,23 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     if (!scanPreview) return
 
     const product = scanPreview
-    setPendingProduct(product)
     setScanQuery('')
     setScanPreview(null)
+    startProductFlow(product)
+  }
 
+  // Passos depois de escolher um produto: nome (só avulso) -> quantidade (se configurado) -> preço.
+  function startProductFlow(product: LocalProduct) {
+    setPendingProduct(product)
+    if (product.ask_name) {
+      setNameInput(String(product.name))
+      setStep('name')
+      return
+    }
+    continueAfterName(product)
+  }
+
+  function continueAfterName(product: LocalProduct) {
     if (config?.quick_sale_ask_quantity) {
       setQuantityInput('1')
       setStep('quantity')
@@ -274,9 +292,18 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     advanceToPriceOrAdd(product, 1)
   }
 
+  function handleNameEnter() {
+    if (!pendingProduct) return
+    const renamed = { ...pendingProduct, name: nameInput.trim() || String(pendingProduct.name) }
+    setPendingProduct(renamed)
+    continueAfterName(renamed)
+  }
+
   function advanceToPriceOrAdd(product: LocalProduct, quantity: number) {
-    if (config?.quick_sale_ask_price) {
-      setPriceInput(String(Number(product.sale_value || 0).toFixed(2)).replace('.', ','))
+    // Pergunta o preço quando a loja configurou assim, no produto avulso e em produto sem preço cadastrado.
+    const noPrice = Number(product.sale_value || 0) <= 0
+    if (config?.quick_sale_ask_price || product.ask_name || noPrice) {
+      setPriceInput(noPrice ? '' : String(Number(product.sale_value || 0).toFixed(2)).replace('.', ','))
       setStep('price')
       return
     }
@@ -294,6 +321,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     if (!pendingProduct) return
     const quantity = Math.max(1, Math.round(parseAmountInput(quantityInput)) || 1)
     const price = parseAmountInput(priceInput) || Number(pendingProduct.sale_value || 0)
+    // Sem preço não entra no carrinho (produto avulso ou sem valor cadastrado).
+    if (price <= 0) return
     addToCart(pendingProduct, quantity, price)
     resetScan()
   }
@@ -302,6 +331,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     if (event.key === 'Enter') {
       event.preventDefault()
       if (step === 'scan') handleScanEnter()
+      else if (step === 'name') handleNameEnter()
       else if (step === 'quantity') handleQuantityEnter()
       else if (step === 'price') handlePriceEnter()
       return
@@ -380,20 +410,14 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
 
   function selectProductFromModal(product: ProductRecord) {
     setModal(null)
-    const localProduct: LocalProduct = {
+    startProductFlow({
       id: product.id,
       code: product.code,
       barcode: product.barcode,
       name: product.name,
       sale_value: product.sale_value,
-    }
-    setPendingProduct(localProduct)
-    if (config?.quick_sale_ask_quantity) {
-      setQuantityInput('1')
-      setStep('quantity')
-    } else {
-      advanceToPriceOrAdd(localProduct, 1)
-    }
+      ask_name: product.ask_name,
+    })
   }
 
   function openClientModal() {
@@ -424,7 +448,10 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setPaymentMethodIndex(0)
     setPaymentAmountInput(remaining ? String(remaining.toFixed(2)).replace('.', ',') : '')
     setModal('payment')
-    setTimeout(() => paymentAmountRef.current?.focus(), 0)
+    setTimeout(() => {
+      paymentAmountRef.current?.focus()
+      paymentAmountRef.current?.select()
+    }, 0)
   }
 
   function addPaymentLine() {
@@ -434,6 +461,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setPayments((prev) => [...prev, { form_payment: method.form_payment, name: method.name, amount }])
     const newRemaining = Math.max(0, remaining - amount)
     setPaymentAmountInput(newRemaining ? String(newRemaining.toFixed(2)).replace('.', ',') : '')
+    // O restante já vem selecionado para o próximo pagamento: é só digitar por cima ou dar Enter.
+    setTimeout(() => paymentAmountRef.current?.select(), 0)
   }
 
   // Envia a NFC-e, espera o retorno da SEFAZ e, autorizada, monta o cupom
@@ -873,10 +902,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   }
 
   // phase === 'active'
-  const stepIcon = step === 'quantity' ? BoxIcon : step === 'price' ? TagIcon : SearchIcon
+  const stepIcon = step === 'quantity' || step === 'name' ? BoxIcon : step === 'price' ? TagIcon : SearchIcon
   const StepIcon = stepIcon
   const stepLabel =
-    step === 'quantity'
+    step === 'name'
+      ? 'Digite o nome do produto'
+      : step === 'quantity'
       ? 'Digite a quantidade'
       : step === 'price'
         ? 'Digite o preço'
@@ -952,17 +983,18 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         <input
           ref={scanInputRef}
           type="text"
-          inputMode={step === 'scan' ? 'text' : 'decimal'}
+          inputMode={step === 'scan' || step === 'name' ? 'text' : 'decimal'}
           autoFocus
-          value={step === 'scan' ? scanQuery : step === 'quantity' ? quantityInput : priceInput}
+          value={step === 'scan' ? scanQuery : step === 'name' ? nameInput : step === 'quantity' ? quantityInput : priceInput}
           onChange={(event) => {
             if (step === 'scan') handleScanChange(event.target.value)
+            else if (step === 'name') setNameInput(event.target.value)
             else if (step === 'quantity') setQuantityInput(event.target.value.replace(/[^\d,]/g, ''))
             else setPriceInput(event.target.value.replace(/[^\d,]/g, ''))
           }}
           onKeyDown={handleScanKeyDown}
           placeholder={
-            step === 'scan' ? 'Nome, código ou código de barras…' : step === 'quantity' ? '1' : '0,00'
+            step === 'scan' ? 'Nome, código ou código de barras…' : step === 'name' ? 'Nome do produto' : step === 'quantity' ? '1' : '0,00'
           }
           className={`w-full rounded-2xl border-2 px-4 py-3.5 text-[20px] font-bold text-[var(--ink)] transition focus:outline-none ${
             step === 'scan'
