@@ -9,6 +9,7 @@ import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../com
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
+import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
 import {
   fetchNfceDetails,
   fetchNfceQrCode,
@@ -83,7 +84,7 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'name' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'cpf' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'cpf' | 'quick-product' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
 
 interface NfceState {
   status: 'sending' | 'authorized' | 'error'
@@ -138,6 +139,9 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
 
   // CPF/CNPJ do consumidor para sair na NFC-e (F5).
   const [consumerDocument, setConsumerDocument] = useState('')
+  // Cadastro rápido de produto (F6): o que veio da bipagem entra já preenchido.
+  const [quickProductSeed, setQuickProductSeed] = useState({ barcode: '', name: '' })
+  const [productNotice, setProductNotice] = useState<string | null>(null)
   const [cpfInput, setCpfInput] = useState('')
   const [cpfError, setCpfError] = useState<string | null>(null)
 
@@ -309,9 +313,17 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       void addScaleLabel(scaleLabel)
       return
     }
-    if (!scanPreview) return
+    void openFoundOrRegister(scanPreview, scanQuery.trim())
+  }
 
-    const product = scanPreview
+  // O leitor manda o Enter logo após o último dígito, antes da busca ao vivo terminar:
+  // confere de novo antes de oferecer o cadastro, para não cadastrar produto que já existe.
+  async function openFoundOrRegister(preview: LocalProduct | null, query: string) {
+    const product = preview ?? (await filterProductBy(query))[0] ?? null
+    if (!product) {
+      openQuickProduct(query)
+      return
+    }
     setScanQuery('')
     setScanPreview(null)
     startProductFlow(product)
@@ -424,6 +436,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       openCpfModal()
       return
     }
+    if (event.key === 'F6') {
+      event.preventDefault()
+      openQuickProduct()
+      return
+    }
     if (step !== 'scan' || scanQuery !== '') return
 
     if (event.key === 'ArrowDown' && cart.length > 0) {
@@ -509,6 +526,24 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       setClientResults(results)
     } catch {
       setClientResults([])
+    }
+  }
+
+  function openQuickProduct(seed = '') {
+    const isCode = /^\d{6,}$/.test(seed)
+    setQuickProductSeed({ barcode: isCode ? seed : '', name: isCode ? '' : seed })
+    setScanQuery('')
+    setScanPreview(null)
+    setScanError(null)
+    setModal('quick-product')
+  }
+
+  function handleQuickProductSaved(product: LocalProduct) {
+    setModal(null)
+    if (phase === 'active') {
+      startProductFlow(product)
+    } else {
+      setProductNotice(`"${product.name}" cadastrado.`)
     }
   }
 
@@ -748,6 +783,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   }, [printerNotice])
 
   useEffect(() => {
+    if (!productNotice) return
+    const timer = setTimeout(() => setProductNotice(null), 4000)
+    return () => clearTimeout(timer)
+  }, [productNotice])
+
+  useEffect(() => {
     if (!tokenNotice) return
     const timer = setTimeout(() => setTokenNotice(null), 6000)
     return () => clearTimeout(timer)
@@ -824,6 +865,9 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       if (phase === 'idle' && modal === null && tokenAsk === null && event.key === 'Enter') {
         event.preventDefault()
         startSale()
+      } else if (phase === 'idle' && modal === null && tokenAsk === null && event.key === 'F6') {
+        event.preventDefault()
+        openQuickProduct()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -950,10 +994,28 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     </>
   )
 
+  const quickProductModal = modal === 'quick-product' && (
+    <QuickProductCreate
+      token={session.token.token}
+      companyId={company.id}
+      initialBarcode={quickProductSeed.barcode}
+      initialName={quickProductSeed.name}
+      inSale={phase === 'active'}
+      onClose={() => setModal(null)}
+      onSaved={handleQuickProductSaved}
+    />
+  )
+
   if (phase === 'idle') {
     return (
       <div className="relative flex h-full flex-col items-center justify-center gap-6 bg-[var(--page)] p-6 text-center">
         {tokenOverlays}
+        {quickProductModal}
+        {productNotice && (
+          <div className="fixed bottom-16 left-1/2 z-[60] -translate-x-1/2 rounded-xl bg-[var(--green-600)] px-4 py-2.5 text-[13px] font-semibold text-white shadow-xl">
+            {productNotice}
+          </div>
+        )}
         <button
           type="button"
           onClick={onExit}
@@ -988,6 +1050,13 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             </kbd>
             <span className="text-[13.5px] font-semibold text-[var(--blue-700)]">para iniciar a venda</span>
           </div>
+          <button
+            type="button"
+            onClick={() => openQuickProduct()}
+            className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+          >
+            <kbd className="rounded-md bg-[var(--page)] px-2 py-1 text-[12px] font-bold">F6</kbd> Cadastro rápido de produto
+          </button>
         </div>
       </div>
     )
@@ -1118,7 +1187,9 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           </p>
         )}
         {step === 'scan' && !scanError && scanQuery.trim() && !scanPreview && !parseScaleLabel(scanQuery, scaleConfig) && (
-          <p className="mt-2.5 px-1 text-[12.5px] text-[var(--muted)]">Nenhum produto encontrado.</p>
+          <p className="mt-2.5 px-1 text-[12.5px] text-[var(--muted)]">
+            Nenhum produto encontrado. <span className="font-semibold text-[var(--blue-700)]">Enter</span> para cadastrar.
+          </p>
         )}
       </div>
 
@@ -1179,6 +1250,13 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           }`}
         >
           <FileTextIcon className="h-3.5 w-3.5" /> F5 CPF na nota
+        </button>
+        <button
+          type="button"
+          onClick={() => openQuickProduct()}
+          className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-2 text-[12.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
+        >
+          <TagIcon className="h-3.5 w-3.5" /> F6 Novo produto
         </button>
         {cart.length > 0 && (
           <button
@@ -1386,6 +1464,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           </div>
         </div>
       )}
+
+      {quickProductModal}
 
       {modal === 'cpf' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setModal(null)}>
