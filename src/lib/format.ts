@@ -28,3 +28,13 @@ export function formatDateTime(value?: string | null): string {
     minute: '2-digit',
   })
 }
+
+export function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
+const quantityFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
+
+export function formatQuantity(value: number): string {
+  return quantityFormatter.format(value || 0)
+}

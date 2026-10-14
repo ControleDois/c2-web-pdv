@@ -28,6 +28,11 @@ export interface ConfigRecord {
   quick_sale_ask_quantity?: boolean
   quick_sale_ask_price?: boolean
   quick_sale_nfce_mode?: 'off' | 'ask' | 'always'
+  scale_enabled?: boolean
+  scale_prefix?: string
+  scale_code_digits?: number
+  scale_value_digits?: number
+  scale_value_type?: 'price' | 'weight'
   nfe_module_enabled?: boolean
   sale_category_default_id?: string | null
   sale_bank_account_default_id?: string | null

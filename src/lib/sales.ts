@@ -31,6 +31,7 @@ export interface CreateSalePayload {
   amount: number
   net_total: number
   note?: string
+  consumer_document?: string
   form_payment: number
   payment_terms: number
   products: SaleProductPayload[]

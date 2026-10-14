@@ -68,6 +68,7 @@ export function ProductSyncPage({ session, company, onReady, embedded, onBack }:
               name: product.name,
               sale_value: product.sale_value,
               unit: product.unit,
+              ask_name: product.ask_name,
             }))
           )
           downloadedSoFar += items.length

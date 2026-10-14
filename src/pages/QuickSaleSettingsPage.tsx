@@ -3,6 +3,8 @@ import { updateConfig } from '../lib/config'
 import { fetchActivePrinters, type PrinterOption } from '../lib/printing'
 import { ApiError } from '../lib/api'
 import type { NfceMode } from '../lib/nfce'
+import { parseScaleLabel, scaleFormatLength, type ScaleConfig } from '../lib/scale'
+import { formatCurrency, formatQuantity } from '../lib/format'
 import { ChevronLeftIcon, CheckCircleIcon, CoinIcon, PrinterIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -45,6 +47,12 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
   const [askPrice, setAskPrice] = useState(Boolean(config?.quick_sale_ask_price))
   const [nfceMode, setNfceMode] = useState<NfceMode>(config?.quick_sale_nfce_mode ?? 'off')
+  const [scaleEnabled, setScaleEnabled] = useState(Boolean(config?.scale_enabled))
+  const [scalePrefix, setScalePrefix] = useState(String(config?.scale_prefix ?? '2'))
+  const [scaleCodeDigits, setScaleCodeDigits] = useState(Number(config?.scale_code_digits ?? 6))
+  const [scaleValueDigits, setScaleValueDigits] = useState(Number(config?.scale_value_digits ?? 5))
+  const [scaleValueType, setScaleValueType] = useState<'price' | 'weight'>(config?.scale_value_type ?? 'price')
+  const [scaleSample, setScaleSample] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -55,7 +63,22 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
       .catch(() => setPrinters([]))
   }, [session.token.token, company.id])
 
+  const scaleDraft: ScaleConfig = {
+    enabled: true,
+    prefix: scalePrefix,
+    codeDigits: scaleCodeDigits,
+    valueDigits: scaleValueDigits,
+    valueType: scaleValueType,
+  }
+  const scaleLength = scaleFormatLength(scaleDraft)
+  const scaleFormatValid = scalePrefix.length > 0 && scaleLength === 13
+  const scaleParsed = scaleSample.trim() ? parseScaleLabel(scaleSample, scaleDraft) : null
+
   async function handleSave() {
+    if (scaleEnabled && !scaleFormatValid) {
+      setError('O formato da etiqueta da balança precisa somar 13 dígitos (prefixo + código + valor + 1 dígito verificador).')
+      return
+    }
     if (!config?.id) {
       setError('Configuração da empresa não encontrada.')
       return
@@ -74,6 +97,11 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_ask_quantity: askQuantity,
         quick_sale_ask_price: askPrice,
         quick_sale_nfce_mode: nfceMode,
+        scale_enabled: scaleEnabled,
+        scale_prefix: scalePrefix,
+        scale_code_digits: scaleCodeDigits,
+        scale_value_digits: scaleValueDigits,
+        scale_value_type: scaleValueType,
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -231,6 +259,103 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
               O módulo de NFe não está ativo nessa empresa — ative no administrativo (Configurações → Fiscal), senão a
               NFC-e não será enviada.
             </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">Balança etiquetadora</p>
+              <p className="text-[11.5px] text-[var(--ink-soft)]">
+                Lê a etiqueta impressa pela balança (ex.: Toledo Prix 4 Plus) e lança o produto com o peso e o valor exatos
+                da etiqueta. O código do item na balança precisa ser o mesmo código do produto no cadastro.
+              </p>
+            </div>
+            <Toggle checked={scaleEnabled} onChange={setScaleEnabled} />
+          </div>
+
+          {scaleEnabled && (
+            <div className="mt-4 flex flex-col gap-3">
+              <div className="grid grid-cols-3 gap-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[12px] font-semibold text-[var(--ink-soft)]">Prefixo</span>
+                  <input
+                    value={scalePrefix}
+                    inputMode="numeric"
+                    onChange={(event) => setScalePrefix(event.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[12px] font-semibold text-[var(--ink-soft)]">Dígitos do código</span>
+                  <input
+                    value={scaleCodeDigits}
+                    inputMode="numeric"
+                    onChange={(event) => setScaleCodeDigits(Math.min(9, Number(event.target.value.replace(/\D/g, '')) || 0))}
+                    className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[12px] font-semibold text-[var(--ink-soft)]">Dígitos do valor</span>
+                  <input
+                    value={scaleValueDigits}
+                    inputMode="numeric"
+                    onChange={(event) => setScaleValueDigits(Math.min(9, Number(event.target.value.replace(/\D/g, '')) || 0))}
+                    className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    { value: 'price', label: 'A etiqueta traz o valor (R$)' },
+                    { value: 'weight', label: 'A etiqueta traz o peso (g)' },
+                  ] as { value: 'price' | 'weight'; label: string }[]
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setScaleValueType(option.value)}
+                    className={`rounded-xl border px-3 py-2.5 text-[12.5px] font-semibold transition ${
+                      scaleValueType === option.value
+                        ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                        : 'border-[var(--border)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <p className={`text-[11.5px] ${scaleFormatValid ? 'text-[var(--ink-soft)]' : 'font-medium text-[var(--red-500)]'}`}>
+                Formato: {scalePrefix || '?'} + {scaleCodeDigits} (código) + {scaleValueDigits} (
+                {scaleValueType === 'price' ? 'valor em centavos' : 'peso em gramas'}) + 1 (verificador) = {scaleLength} dígitos
+                {scaleFormatValid ? '.' : ' — precisa dar 13.'}
+              </p>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[12px] font-semibold text-[var(--ink-soft)]">Testar uma etiqueta (bipe ou digite)</span>
+                <input
+                  value={scaleSample}
+                  inputMode="numeric"
+                  placeholder="2000123012345"
+                  onChange={(event) => setScaleSample(event.target.value.replace(/\D/g, '').slice(0, 13))}
+                  className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
+                />
+              </label>
+              {scaleSample.trim() && (
+                <p className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[12.5px] text-[var(--ink)]">
+                  {scaleParsed
+                    ? `Código do item: ${scaleParsed.code} · ${
+                        scaleValueType === 'price'
+                          ? `valor ${formatCurrency(scaleParsed.value)}`
+                          : `peso ${formatQuantity(scaleParsed.value)} kg`
+                      }`
+                    : 'Não reconheci essa etiqueta com o formato acima. Ajuste o prefixo e os dígitos.'}
+                </p>
+              )}
+            </div>
           )}
         </div>
 

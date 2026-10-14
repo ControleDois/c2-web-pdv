@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { filterProductBy, type LocalProduct } from '../lib/db'
+import { filterProductBy, findProductByCode, type LocalProduct } from '../lib/db'
 import { searchPeople, type PersonRecord } from '../lib/people'
 import { searchProducts, totalStock, type ProductRecord } from '../lib/products'
 import { createSale, type SaleProductPayload, type SalePlotPayload } from '../lib/sales'
@@ -18,7 +18,10 @@ import {
   type NfceDetails,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
-import { formatCurrency } from '../lib/format'
+import { formatCurrency, formatQuantity, round2 } from '../lib/format'
+import { parseScaleLabel, resolveScaleLine, scaleConfigFrom, type ScaleLabel } from '../lib/scale'
+import { isValidConsumerDocument } from '../lib/document'
+import { formatDocument } from '../lib/formatDocument'
 import { buildNfceDocument, buildQuickSaleDocument, createPrintJob, type PrintDocument } from '../lib/printing'
 import type { PdvPrinters } from '../lib/terminal'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
@@ -51,12 +54,26 @@ interface QuickSalePageProps {
 }
 
 interface CartItem {
+  uid: number
   productId: string
   code?: string
   name: string
   unitValue: number
   quantity: number
+  unit?: string
+  // Item pesado na balança: o total da etiqueta vale exato, sem recalcular peso x preço.
+  lineTotal?: number
 }
+
+function itemTotal(item: CartItem): number {
+  return item.lineTotal ?? round2(item.unitValue * item.quantity)
+}
+
+function isWeighed(item: CartItem): boolean {
+  return item.lineTotal !== undefined
+}
+
+let cartUidSeed = 0
 
 interface PaymentLine {
   form_payment: number
@@ -66,7 +83,7 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'name' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'cpf' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
 
 interface NfceState {
   status: 'sending' | 'authorized' | 'error'
@@ -116,6 +133,13 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [quantityInput, setQuantityInput] = useState('1')
   const [priceInput, setPriceInput] = useState('')
   const scanInputRef = useRef<HTMLInputElement>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const scaleConfig = scaleConfigFrom(config)
+
+  // CPF/CNPJ do consumidor para sair na NFC-e (F5).
+  const [consumerDocument, setConsumerDocument] = useState('')
+  const [cpfInput, setCpfInput] = useState('')
+  const [cpfError, setCpfError] = useState<string | null>(null)
 
   const [productModalQuery, setProductModalQuery] = useState('')
   const [productModalResults, setProductModalResults] = useState<ProductRecord[]>([])
@@ -153,7 +177,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [nfceNotice, setNfceNotice] = useState<string | null>(null)
   const nfceMode = config?.quick_sale_nfce_mode ?? 'off'
 
-  const total = cart.reduce((sum, item) => sum + item.unitValue * item.quantity, 0)
+  const total = round2(cart.reduce((sum, item) => sum + itemTotal(item), 0))
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0)
   const remaining = Math.max(0, total - paidTotal)
 
@@ -192,6 +216,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setCart([])
     setSelectedIndex(0)
     setClient(null)
+    setConsumerDocument('')
     setPayments([])
     setPaymentAmountInput('')
     setSubmitError(null)
@@ -203,6 +228,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setStep('scan')
     setScanQuery('')
     setScanPreview(null)
+    setScanError(null)
     setPendingProduct(null)
     setQuantityInput('1')
     setPriceInput('')
@@ -219,10 +245,16 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setPhase('idle')
   }
 
-  function addToCart(product: LocalProduct, quantity: number, unitValue: number) {
+  function addToCart(
+    product: LocalProduct,
+    quantity: number,
+    unitValue: number,
+    weighed?: { lineTotal: number }
+  ) {
     setCart((prev) => {
-      // Produto avulso: cada nome digitado é uma linha própria, nunca soma com outra.
-      const existingIndex = product.ask_name ? -1 : prev.findIndex((item) => item.productId === product.id)
+      // Produto avulso e item pesado na balança: cada um é uma linha própria, nunca soma com outra.
+      const existingIndex =
+        product.ask_name || weighed ? -1 : prev.findIndex((item) => item.productId === product.id && !isWeighed(item))
       if (existingIndex >= 0) {
         const next = [...prev]
         next[existingIndex] = {
@@ -237,11 +269,14 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       return [
         ...prev,
         {
+          uid: ++cartUidSeed,
           productId: product.id,
           code: product.code !== undefined ? String(product.code) : undefined,
           name: product.name,
           unitValue,
           quantity,
+          unit: weighed ? String(product.unit || 'KG').replace(/\d+$/, '') : undefined,
+          lineTotal: weighed?.lineTotal,
         },
       ]
     })
@@ -251,6 +286,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // - mostra o produto encontrado antes mesmo de apertar Enter.
   async function handleScanChange(value: string) {
     setScanQuery(value)
+    setScanError(null)
+    if (parseScaleLabel(value, scaleConfig)) {
+      setScanPreview(null)
+      return
+    }
     if (!value.trim()) {
       setScanPreview(null)
       return
@@ -264,12 +304,34 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       if (cart.length > 0) openPaymentModal()
       return
     }
+    const scaleLabel = parseScaleLabel(scanQuery, scaleConfig)
+    if (scaleLabel) {
+      void addScaleLabel(scaleLabel)
+      return
+    }
     if (!scanPreview) return
 
     const product = scanPreview
     setScanQuery('')
     setScanPreview(null)
     startProductFlow(product)
+  }
+
+  // Etiqueta da balança: o código do item acha o produto e o valor/peso da etiqueta define a linha,
+  // sem passar por quantidade nem preço.
+  async function addScaleLabel(label: ScaleLabel) {
+    const product = await findProductByCode(label.code)
+    resetScan()
+    if (!product) {
+      setScanError(`Etiqueta da balança: nenhum produto com o código ${label.code}. Cadastre o produto com esse código ou sincronize os produtos.`)
+      return
+    }
+    const line = resolveScaleLine(label, scaleConfig, Number(product.sale_value || 0))
+    if (!line) {
+      setScanError(`"${product.name}" está sem preço cadastrado — informe o preço do produto para vender pela balança.`)
+      return
+    }
+    addToCart(product, line.quantity, line.unitValue, { lineTotal: line.total })
   }
 
   // Passos depois de escolher um produto: nome (só avulso) -> quantidade (se configurado) -> preço.
@@ -357,6 +419,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       openPaymentModal()
       return
     }
+    if (event.key === 'F5') {
+      event.preventDefault()
+      openCpfModal()
+      return
+    }
     if (step !== 'scan' || scanQuery !== '') return
 
     if (event.key === 'ArrowDown' && cart.length > 0) {
@@ -368,13 +435,15 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     } else if (event.key === '+' && cart.length > 0) {
       event.preventDefault()
       setCart((prev) =>
-        prev.map((item, index) => (index === selectedIndex ? { ...item, quantity: item.quantity + 1 } : item))
+        prev.map((item, index) =>
+          index === selectedIndex && !isWeighed(item) ? { ...item, quantity: item.quantity + 1 } : item
+        )
       )
     } else if (event.key === '-' && cart.length > 0) {
       event.preventDefault()
       setCart((prev) =>
         prev.map((item, index) =>
-          index === selectedIndex ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item
+          index === selectedIndex && !isWeighed(item) ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item
         )
       )
     } else if (event.key === 'Delete' && cart.length > 0) {
@@ -441,6 +510,27 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     } catch {
       setClientResults([])
     }
+  }
+
+  function openCpfModal() {
+    setCpfInput(consumerDocument ? formatDocument(consumerDocument) : '')
+    setCpfError(null)
+    setModal('cpf')
+  }
+
+  function confirmCpf() {
+    const digits = cpfInput.replace(/\D/g, '')
+    if (!digits) {
+      setConsumerDocument('')
+      setModal(null)
+      return
+    }
+    if (!isValidConsumerDocument(digits)) {
+      setCpfError('CPF ou CNPJ inválido. Confira os números.')
+      return
+    }
+    setConsumerDocument(digits)
+    setModal(null)
   }
 
   function openPaymentModal() {
@@ -574,7 +664,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       description: item.name,
       amount: item.quantity,
       cost_value: item.unitValue,
-      subtotal: item.unitValue * item.quantity,
+      subtotal: itemTotal(item),
     }))
 
     const plots: SalePlotPayload[] = payments.map((payment, index) => ({
@@ -601,6 +691,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         amount: total,
         net_total: total,
         note: 'Venda Rápida',
+        consumer_document: consumerDocument || undefined,
         form_payment: payments[0]?.form_payment ?? 9,
         payment_terms: Math.max(payments.length - 1, 0),
         products,
@@ -615,9 +706,10 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         clientName: client?.name,
         items: cart.map((item) => ({
           name: item.name,
+          unit: item.unit,
           quantity: item.quantity,
           unitValue: item.unitValue,
-          total: item.unitValue * item.quantity,
+          total: itemTotal(item),
         })),
         total,
         payments: payments.map((p) => ({ name: p.name, amount: p.amount })),
@@ -929,6 +1021,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             <p className="text-[14px] font-bold text-[var(--ink)]">Venda Rápida</p>
             <p className="text-[11.5px] text-[var(--ink-soft)]">
               {client ? client.name : 'Cliente não informado'} · F3 troca cliente
+              {consumerDocument && <span className="font-semibold text-[var(--blue-700)]"> · CPF na nota: {formatDocument(consumerDocument)}</span>}
             </p>
           </div>
         </div>
@@ -1019,7 +1112,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             </p>
           </div>
         )}
-        {step === 'scan' && scanQuery.trim() && !scanPreview && (
+        {step === 'scan' && scanError && (
+          <p className="mt-2.5 rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--red-500)]">
+            {scanError}
+          </p>
+        )}
+        {step === 'scan' && !scanError && scanQuery.trim() && !scanPreview && !parseScaleLabel(scanQuery, scaleConfig) && (
           <p className="mt-2.5 px-1 text-[12.5px] text-[var(--muted)]">Nenhum produto encontrado.</p>
         )}
       </div>
@@ -1034,7 +1132,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           <div className="flex flex-col gap-1.5">
             {cart.map((item, index) => (
               <div
-                key={item.productId}
+                key={item.uid}
                 className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 transition ${
                   index === selectedIndex
                     ? 'border-[var(--blue-500)] bg-[var(--blue-100)]'
@@ -1044,11 +1142,11 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-semibold text-[var(--ink)]">{item.name}</p>
                   <p className="text-[11.5px] text-[var(--ink-soft)]">
-                    {item.quantity} x {formatCurrency(item.unitValue)}
+                    {formatQuantity(item.quantity)}{item.unit ? ` ${item.unit.toLowerCase()}` : ''} x {formatCurrency(item.unitValue)}{isWeighed(item) ? ' · balança' : ''}
                   </p>
                 </div>
                 <p className="text-[14px] font-bold text-[var(--ink)]">
-                  {formatCurrency(item.unitValue * item.quantity)}
+                  {formatCurrency(itemTotal(item))}
                 </p>
               </div>
             ))}
@@ -1070,6 +1168,17 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-2 text-[12.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
         >
           <UserIcon className="h-3.5 w-3.5" /> F3 Cliente
+        </button>
+        <button
+          type="button"
+          onClick={openCpfModal}
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12.5px] font-bold hover:text-[var(--ink)] ${
+            consumerDocument
+              ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'border-[var(--border)] text-[var(--ink-soft)]'
+          }`}
+        >
+          <FileTextIcon className="h-3.5 w-3.5" /> F5 CPF na nota
         </button>
         {cart.length > 0 && (
           <button
@@ -1274,6 +1383,68 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {modal === 'cpf' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setModal(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-[var(--surface)] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-[14.5px] font-bold text-[var(--ink)]">CPF na nota</p>
+            <p className="mt-0.5 text-[11.5px] text-[var(--ink-soft)]">
+              Sai no cupom fiscal (NFC-e) desta venda. Deixe em branco para consumidor não identificado.
+            </p>
+            <input
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              value={cpfInput}
+              placeholder="000.000.000-00"
+              onChange={(event) => {
+                const digits = event.target.value.replace(/\D/g, '').slice(0, 14)
+                setCpfInput(digits ? formatDocument(digits) : '')
+                setCpfError(null)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  confirmCpf()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setModal(null)
+                }
+              }}
+              className="mt-3 w-full rounded-xl bg-[var(--page)] px-3.5 py-3 text-center text-[20px] font-bold text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
+            />
+            {cpfError && <p className="mt-2 text-[12.5px] font-medium text-[var(--red-500)]">{cpfError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              {consumerDocument && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConsumerDocument('')
+                    setModal(null)
+                  }}
+                  className="mr-auto rounded-xl px-3 py-2 text-[13px] font-semibold text-[var(--red-500)] hover:bg-[var(--red-100)]"
+                >
+                  Remover
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setModal(null)}
+                className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]"
+              >
+                Cancelar (Esc)
+              </button>
+              <button
+                type="button"
+                onClick={confirmCpf}
+                className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white hover:bg-[var(--blue-700)]"
+              >
+                Confirmar (Enter)
+              </button>
+            </div>
           </div>
         </div>
       )}

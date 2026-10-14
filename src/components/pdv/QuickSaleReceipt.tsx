@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { formatCurrency, formatDateTime } from '../../lib/format'
+import { formatCurrency, formatDateTime, formatQuantity } from '../../lib/format'
 
 export interface ReceiptItem {
   name: string
   quantity: number
+  unit?: string
   unitValue: number
   total: number
 }
@@ -51,7 +52,7 @@ function ReceiptBody({ data, printModel }: QuickSaleReceiptProps) {
         {data.items.map((item, index) => (
           <div key={index} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 3 }}>
             <span style={{ flex: 1 }}>
-              {item.quantity}x {item.name}
+              {formatQuantity(item.quantity)}{item.unit ? ` ${item.unit.toLowerCase()}` : 'x'} {item.name}
             </span>
             <span>{formatCurrency(item.total)}</span>
           </div>

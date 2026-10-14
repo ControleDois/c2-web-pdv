@@ -74,6 +74,13 @@ export async function filterProductBy(searchText: string): Promise<LocalProduct[
   return all.filter((p) => (p.name ?? '').toLowerCase().includes(searchText.toLowerCase()))
 }
 
+// Produto pelo código do cadastro (a balança etiquetadora imprime esse código na etiqueta).
+export async function findProductByCode(code: number): Promise<LocalProduct | null> {
+  const db = await getDb()
+  const all = (await db.transaction('products').objectStore('products').getAll()) as LocalProduct[]
+  return all.find((p) => Number(p.code) === code) ?? null
+}
+
 export async function getAllTables(): Promise<FoodTable[]> {
   const db = await getDb()
   return db.transaction('food_tables').objectStore('food_tables').getAll()

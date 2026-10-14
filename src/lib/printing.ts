@@ -79,7 +79,7 @@ const currency = (value: number | null | undefined) => `R$ ${money(value)}`
 
 const quantity = (value: number | null | undefined) => {
   const number = Number(value) || 0
-  return Number.isInteger(number) ? String(number) : number.toLocaleString('pt-BR', { minimumFractionDigits: 2 })
+  return Number.isInteger(number) ? String(number) : number.toLocaleString('pt-BR', { maximumFractionDigits: 3 })
 }
 
 function dateTime(iso: string, withSeconds = true) {
@@ -116,7 +116,7 @@ export function buildQuickSaleDocument(data: ReceiptData, options: { secondCopy?
 
   lines.push({ t: 'hr' })
   for (const item of data.items) {
-    lines.push({ t: 'row', l: `${item.quantity}x ${item.name}`, r: money(item.total) })
+    lines.push({ t: 'row', l: `${quantity(item.quantity)}${item.unit ? ` ${item.unit.toLowerCase()}` : 'x'} ${item.name}`, r: money(item.total) })
   }
   lines.push({ t: 'hr' })
   lines.push({ t: 'row', l: 'TOTAL', r: currency(data.total), bold: true })
