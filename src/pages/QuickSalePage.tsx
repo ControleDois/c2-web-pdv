@@ -335,7 +335,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     const product = await findProductByCode(label.code)
     resetScan()
     if (!product) {
-      setScanError(`Etiqueta da balança: nenhum produto com o código ${label.code}. Cadastre o produto com esse código ou sincronize os produtos.`)
+      setScanError(`Etiqueta da balança: nenhum produto com o código ${label.code}. Cadastre o produto com esse número no código de barras ou sincronize os produtos.`)
       return
     }
     const line = resolveScaleLine(label, scaleConfig, Number(product.sale_value || 0))

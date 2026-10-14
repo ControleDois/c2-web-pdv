@@ -74,11 +74,18 @@ export async function filterProductBy(searchText: string): Promise<LocalProduct[
   return all.filter((p) => (p.name ?? '').toLowerCase().includes(searchText.toLowerCase()))
 }
 
-// Produto pelo código do cadastro (a balança etiquetadora imprime esse código na etiqueta).
+// Produto do código impresso na etiqueta da balança. Vale o código curto cadastrado como código de barras
+// (ex.: 300 ou 000300); na falta dele, o código do produto — só quando for único, pois cadastros em lote repetem código.
 export async function findProductByCode(code: number): Promise<LocalProduct | null> {
   const db = await getDb()
   const all = (await db.transaction('products').objectStore('products').getAll()) as LocalProduct[]
-  return all.find((p) => Number(p.code) === code) ?? null
+  const byBarcode = all.find((p) => {
+    const barcode = String(p.barcode ?? '').trim()
+    return /^\d{1,9}$/.test(barcode) && Number(barcode) === code
+  })
+  if (byBarcode) return byBarcode
+  const byCode = all.filter((p) => Number(p.code) === code)
+  return byCode.length === 1 ? byCode[0] : null
 }
 
 export async function getAllTables(): Promise<FoodTable[]> {

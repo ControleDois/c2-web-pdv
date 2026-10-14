@@ -268,7 +268,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
               <p className="text-[13.5px] font-bold text-[var(--ink)]">Balança etiquetadora</p>
               <p className="text-[11.5px] text-[var(--ink-soft)]">
                 Lê a etiqueta impressa pela balança (ex.: Toledo Prix 4 Plus) e lança o produto com o peso e o valor exatos
-                da etiqueta. O código do item na balança precisa ser o mesmo código do produto no cadastro.
+                da etiqueta. No cadastro do produto, coloque o código do item da balança no campo código de barras (ex.: 300).
               </p>
             </div>
             <Toggle checked={scaleEnabled} onChange={setScaleEnabled} />
