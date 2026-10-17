@@ -227,3 +227,70 @@ export function fetchNfceDetails(token: string, nfeId: string) {
 export function fetchNfceQrCode(token: string, nfeId: string) {
   return apiGet<{ url: string }>(`/nfe/${nfeId}/qrcode`, undefined, token)
 }
+
+// NFS-e (nota de serviço): a venda rápida gera a nota só com os itens de serviço (produto do tipo
+// serviço) e envia pela mesma fila do administrativo. Status: 1 = em processamento, 2 = autorizada, 3 = erro.
+export interface NfseSummary {
+  id: string
+  status: number
+  numero_nfse?: string | null
+  mensagem_sefaz?: string | null
+  caminho_pdf?: string | null
+}
+
+export interface NfseResult {
+  mensagem?: string
+  nfse?: NfseSummary
+}
+
+export function generateNfseFromSale(token: string, saleId: string) {
+  return apiPost<NfseResult>(`/nfse/generate-from-sale/${saleId}`, {}, token)
+}
+
+export function nfseErrorMessage(err: unknown): string {
+  return err instanceof ApiError ? err.message : 'Não foi possível enviar a NFS-e.'
+}
+
+export interface NfseOutcome {
+  authorized: boolean
+  pending: boolean
+  message: string
+  number?: string | null
+  pdfUrl?: string | null
+}
+
+const NFSE_POLL_TIMEOUT_MS = 120_000
+
+export async function waitNfseOutcome(token: string, nfseId: string): Promise<NfseOutcome> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < NFSE_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+    let nfse: NfseSummary
+    try {
+      nfse = await apiGet<NfseSummary>(`/nfse/${nfseId}`, undefined, token)
+    } catch {
+      continue
+    }
+    if (Number(nfse.status) === 2) {
+      return {
+        authorized: true,
+        pending: false,
+        message: 'NFS-e autorizada.',
+        number: nfse.numero_nfse,
+        pdfUrl: nfse.caminho_pdf,
+      }
+    }
+    if (Number(nfse.status) === 3) {
+      return {
+        authorized: false,
+        pending: false,
+        message: String(nfse.mensagem_sefaz || 'A NFS-e foi rejeitada.').trim(),
+      }
+    }
+  }
+  return {
+    authorized: false,
+    pending: true,
+    message: 'A NFS-e ainda está em processamento. Acompanhe em Notas de Serviço no administrativo.',
+  }
+}

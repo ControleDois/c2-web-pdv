@@ -28,6 +28,8 @@ export interface ConfigRecord {
   quick_sale_ask_quantity?: boolean
   quick_sale_ask_price?: boolean
   quick_sale_nfce_mode?: 'off' | 'ask' | 'always'
+  quick_sale_nfse_mode?: 'off' | 'ask' | 'always'
+  nfse_module_enabled?: boolean
   scale_enabled?: boolean
   scale_prefix?: string
   scale_code_digits?: number

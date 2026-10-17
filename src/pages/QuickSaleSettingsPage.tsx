@@ -47,6 +47,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [askQuantity, setAskQuantity] = useState(Boolean(config?.quick_sale_ask_quantity))
   const [askPrice, setAskPrice] = useState(Boolean(config?.quick_sale_ask_price))
   const [nfceMode, setNfceMode] = useState<NfceMode>(config?.quick_sale_nfce_mode ?? 'off')
+  const [nfseMode, setNfseMode] = useState<NfceMode>(config?.quick_sale_nfse_mode ?? 'off')
   const [scaleEnabled, setScaleEnabled] = useState(Boolean(config?.scale_enabled))
   const [scalePrefix, setScalePrefix] = useState(String(config?.scale_prefix ?? '2'))
   const [scaleCodeDigits, setScaleCodeDigits] = useState(Number(config?.scale_code_digits ?? 6))
@@ -97,6 +98,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         quick_sale_ask_quantity: askQuantity,
         quick_sale_ask_price: askPrice,
         quick_sale_nfce_mode: nfceMode,
+        quick_sale_nfse_mode: nfseMode,
         scale_enabled: scaleEnabled,
         scale_prefix: scalePrefix,
         scale_code_digits: scaleCodeDigits,
@@ -258,6 +260,44 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             <p className="mt-2 text-[11.5px] font-medium text-[var(--red-500)]">
               O módulo de NFe não está ativo nessa empresa — ative no administrativo (Configurações → Fiscal), senão a
               NFC-e não será enviada.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="mb-3">
+            <p className="text-[13.5px] font-bold text-[var(--ink)]">NFS-e (nota de serviço) na venda rápida</p>
+            <p className="text-[11.5px] text-[var(--ink-soft)]">
+              O que fazer com a nota de serviço ao finalizar uma venda que tem serviço (produto cadastrado como
+              Serviço). Só os serviços entram na nota. Usa a configuração de NFS-e do administrativo.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                { value: 'off', label: 'Não emitir' },
+                { value: 'ask', label: 'Perguntar' },
+                { value: 'always', label: 'Sempre emitir' },
+              ] as { value: NfceMode; label: string }[]
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setNfseMode(option.value)}
+                className={`rounded-xl border px-3 py-2.5 text-[13px] font-semibold transition ${
+                  nfseMode === option.value
+                    ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                    : 'border-[var(--border)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {nfseMode !== 'off' && config?.nfse_module_enabled === false && (
+            <p className="mt-2 text-[11.5px] font-medium text-[var(--red-500)]">
+              O módulo de NFS-e não está ativo nessa empresa — ative no administrativo (Configurações → Fiscal), senão a
+              nota de serviço não será enviada.
             </p>
           )}
         </div>

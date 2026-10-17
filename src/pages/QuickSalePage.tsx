@@ -14,9 +14,13 @@ import {
   fetchNfceDetails,
   fetchNfceQrCode,
   generateNfceFromSale,
+  generateNfseFromSale,
   nfceErrorMessage,
+  nfseErrorMessage,
   waitNfceOutcome,
+  waitNfseOutcome,
   type NfceDetails,
+  type NfseOutcome,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
 import { formatCurrency, formatQuantity, round2 } from '../lib/format'
@@ -64,6 +68,8 @@ interface CartItem {
   unit?: string
   // Item pesado na balança: o total da etiqueta vale exato, sem recalcular peso x preço.
   lineTotal?: number
+  // Produto do tipo Serviço: é o que entra na NFS-e.
+  isService?: boolean
 }
 
 function itemTotal(item: CartItem): number {
@@ -84,7 +90,14 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'name' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'cpf' | 'quick-product' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'cpf' | 'quick-product' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-nfse' | 'nfse' | 'ask-preview' | 'receipt'
+
+interface NfseState {
+  status: 'sending' | 'authorized' | 'error'
+  message: string
+  pending?: boolean
+  outcome?: NfseOutcome
+}
 
 interface NfceState {
   status: 'sending' | 'authorized' | 'error'
@@ -165,6 +178,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
   const [savedSale, setSavedSale] = useState<{ id: string; code?: number } | null>(null)
   const [nfceState, setNfceState] = useState<NfceState | null>(null)
+  const [nfseState, setNfseState] = useState<NfseState | null>(null)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
   const { receiptPrinterId, nfcePrinterId } = printers
@@ -180,6 +194,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // comprovante antes do envio terminar) - avisa na tela inicial.
   const [nfceNotice, setNfceNotice] = useState<string | null>(null)
   const nfceMode = config?.quick_sale_nfce_mode ?? 'off'
+  const nfseMode = config?.quick_sale_nfse_mode ?? 'off'
 
   const total = round2(cart.reduce((sum, item) => sum + itemTotal(item), 0))
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0)
@@ -281,6 +296,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           quantity,
           unit: weighed ? String(product.unit || 'KG').replace(/\d+$/, '') : undefined,
           lineTotal: weighed?.lineTotal,
+          isService: Number(product.role) === 1,
         },
       ]
     })
@@ -639,6 +655,46 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     }
   }
 
+  // NFS-e: só os itens de serviço da venda entram na nota. Depois do resultado (ou de seguir sem a
+  // nota), a venda segue para a NFC-e (se configurada) e para o comprovante.
+  async function emitNfse(sale: { id: string; code?: number }) {
+    setModal('nfse')
+    setNfseState({ status: 'sending', message: 'Enviando NFS-e…' })
+    try {
+      const result = await generateNfseFromSale(session.token.token, sale.id)
+      const nfseId = result.nfse?.id
+      if (!nfseId) throw new Error('sem-id')
+      setNfseState({ status: 'sending', message: 'Aguardando a autorização da prefeitura…' })
+      const outcome = await waitNfseOutcome(session.token.token, nfseId)
+      if (!outcome.authorized) {
+        setNfseState({ status: 'error', message: outcome.message, pending: outcome.pending })
+        return
+      }
+      setNfseState({ status: 'authorized', message: outcome.message, outcome })
+    } catch (err) {
+      const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFS-e.' : nfseErrorMessage(err)
+      setNfseState({ status: 'error', message })
+      setNfceNotice(`NFS-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi emitida: ${message}`)
+    }
+  }
+
+  function continueAfterNfse(saved: { id: string; code?: number }) {
+    setNfseState(null)
+    if (nfceMode === 'ask') {
+      setModal('ask-nfce')
+    } else if (nfceMode === 'always') {
+      void emitNfce(saved)
+    } else {
+      proceedAfterSale()
+    }
+  }
+
+  function answerNfse(emit: boolean) {
+    if (!savedSale) return
+    if (emit) void emitNfse(savedSale)
+    else continueAfterNfse(savedSale)
+  }
+
   // Manda o documento para a impressora cadastrada. Se não der (servidor de
   // impressão fora do ar não é erro aqui - o trabalho fica na fila), o
   // operador continua com o preview para imprimir pelo navegador.
@@ -759,15 +815,15 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       const saved = { id: sale.id, code: sale.code }
       setSavedSale(saved)
       setNfceState(null)
+      setNfseState(null)
 
-      if (nfceMode === 'ask') {
-        setModal('ask-nfce')
+      const hasService = cart.some((item) => item.isService)
+      if (hasService && nfseMode === 'ask') {
+        setModal('ask-nfse')
+      } else if (hasService && nfseMode === 'always') {
+        void emitNfse(saved)
       } else {
-        if (nfceMode === 'always') {
-          void emitNfce(saved)
-        } else {
-          proceedAfterSale()
-        }
+        continueAfterNfse(saved)
       }
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : 'Não foi possível registrar a venda. Tente novamente.')
@@ -848,6 +904,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   function closeReceiptAndReset() {
     setSavedSale(null)
     setNfceState(null)
+    setNfseState(null)
     resetSale()
     setModal(null)
     setPhase('idle')
@@ -1722,6 +1779,128 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                 Sim (S)
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'ask-nfse' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div
+            className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
+            tabIndex={-1}
+            ref={(el) => el?.focus()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' || e.key.toUpperCase() === 'N') {
+                e.preventDefault()
+                answerNfse(false)
+              } else if (e.key === 'Enter' || e.key.toUpperCase() === 'S') {
+                e.preventDefault()
+                answerNfse(true)
+              }
+            }}
+          >
+            <p className="text-[14px] font-semibold text-[var(--ink)]">Venda registrada! Emitir NFS-e (nota de serviço)?</p>
+            <div className="mt-4 flex justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => answerNfse(false)}
+                className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]"
+              >
+                Não (N)
+              </button>
+              <button
+                type="button"
+                onClick={() => answerNfse(true)}
+                className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white"
+              >
+                Sim (S)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'nfse' && nfseState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="flex w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
+            tabIndex={-1}
+            ref={(el) => el?.focus()}
+            onKeyDown={(e) => {
+              if (nfseState.status === 'sending') return
+              if (e.key === 'Escape' || e.key === 'Enter') {
+                e.preventDefault()
+                if (savedSale) continueAfterNfse(savedSale)
+              }
+            }}
+          >
+            <div className="border-b border-[var(--border)] px-5 py-3.5">
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">
+                NFS-e{nfseState.outcome?.number ? ` nº ${nfseState.outcome.number}` : ''}
+              </p>
+            </div>
+
+            {nfseState.status === 'sending' && (
+              <div className="px-5 py-8 text-center">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-[3px] border-[var(--border)] border-t-[var(--blue-500)]" />
+                <p className="mt-4 text-[13.5px] font-semibold text-[var(--ink)]">{nfseState.message}</p>
+                <p className="mt-1 text-[12px] text-[var(--muted)]">Não feche esta tela.</p>
+              </div>
+            )}
+
+            {nfseState.status === 'error' && (
+              <div className="px-5 py-5">
+                <p className="rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--red-500)]">
+                  {nfseState.pending ? '' : 'NFS-e não autorizada: '}
+                  {nfseState.message}
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => savedSale && continueAfterNfse(savedSale)}
+                    className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+                  >
+                    Seguir sem NFS-e
+                  </button>
+                  {!nfseState.pending && savedSale && (
+                    <button
+                      type="button"
+                      onClick={() => void emitNfse(savedSale)}
+                      className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
+                    >
+                      Tentar de novo
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {nfseState.status === 'authorized' && (
+              <>
+                <p className="px-5 py-8 text-center text-[13.5px] font-semibold text-[var(--green-600)]">
+                  NFS-e autorizada{nfseState.outcome?.number ? ` (nº ${nfseState.outcome.number})` : ''}.
+                </p>
+                <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
+                  <button
+                    type="button"
+                    onClick={() => savedSale && continueAfterNfse(savedSale)}
+                    className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+                  >
+                    Continuar (Enter)
+                  </button>
+                  {nfseState.outcome?.pdfUrl && (
+                    <a
+                      href={nfseState.outcome.pdfUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-center text-[13px] font-bold text-white"
+                    >
+                      Abrir PDF da nota
+                    </a>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

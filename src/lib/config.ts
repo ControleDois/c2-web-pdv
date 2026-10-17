@@ -12,6 +12,7 @@ export interface QuickSaleConfigPayload {
   quick_sale_ask_quantity?: boolean
   quick_sale_ask_price?: boolean
   quick_sale_nfce_mode?: 'off' | 'ask' | 'always'
+  quick_sale_nfse_mode?: 'off' | 'ask' | 'always'
   scale_enabled?: boolean
   scale_prefix?: string
   scale_code_digits?: number
