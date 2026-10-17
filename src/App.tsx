@@ -94,29 +94,30 @@ function App() {
     )
   } else if (session && activeCompany) {
     content = (
-      <div className="flex h-svh flex-col bg-[var(--page)]">
-        <header className="flex flex-none items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-2.5">
+      <div className="flex h-dvh flex-col bg-[var(--page)]">
+        <header className="app-header flex flex-none items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <Logo className="h-6 w-6" />
             <span className="text-[13px] font-bold text-[var(--ink)]">PDV</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-1 sm:gap-3">
             <button
               type="button"
               onClick={handleSwitchCompany}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]"
             >
-              <BuildingsIcon className="h-3.5 w-3.5" />
-              {getCompanyName(activeCompany)}
+              <BuildingsIcon className="h-3.5 w-3.5 flex-none" />
+              <span className="max-w-[28vw] truncate sm:max-w-none">{getCompanyName(activeCompany)}</span>
             </button>
             <ThemeToggle variant="inline" />
             <button
               type="button"
               onClick={handleLogout}
+              aria-label="Sair"
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold text-[var(--red-500)] hover:bg-[var(--red-100)]"
             >
               <LogoutIcon className="h-3.5 w-3.5" />
-              Sair
+              <span className="hidden sm:inline">Sair</span>
             </button>
           </div>
         </header>

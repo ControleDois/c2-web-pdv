@@ -133,3 +133,49 @@ export function Sidebar({
     </nav>
   )
 }
+
+// Barra de navegação do celular (no lugar do menu lateral): os mesmos destinos, no rodapé e com alvos grandes.
+export function MobileNav({
+  screen,
+  onNavigate,
+  showTables = true,
+  showQuickSale = false,
+  showNfce = false,
+  showCashRegister = false,
+  showTokens = false,
+  showSalesHistory = false,
+}: SidebarProps) {
+  const items = [
+    showTables && { key: 'tables' as const, label: 'Mesas', icon: GridIcon },
+    showQuickSale && { key: 'quick-sale' as const, label: 'Venda', icon: CoinIcon },
+    showSalesHistory && { key: 'sales' as const, label: 'Histórico', icon: ClockIcon },
+    showNfce && { key: 'nfce' as const, label: 'NFC-e', icon: FileTextIcon },
+    showCashRegister && { key: 'cash-register' as const, label: 'Caixa', icon: WalletIcon },
+    showTokens && { key: 'tokens' as const, label: 'Fichas', icon: QrCodeIcon },
+    { key: 'settings' as const, label: 'Ajustes', icon: SettingsIcon },
+  ].filter(Boolean) as { key: PdvScreen; label: string; icon: typeof GridIcon }[]
+
+  return (
+    <nav className="flex flex-none items-stretch justify-around border-t border-[var(--border)] bg-[var(--surface)] pb-[env(safe-area-inset-bottom)] md:hidden">
+      {items.map((item) => {
+        const Icon = item.icon
+        const active = screen === item.key
+        return (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => onNavigate(item.key)}
+            className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10.5px] font-bold transition ${
+              active ? 'text-[var(--blue-700)]' : 'text-[var(--ink-soft)]'
+            }`}
+          >
+            <span className={`flex h-7 w-12 items-center justify-center rounded-full ${active ? 'bg-[var(--blue-100)]' : ''}`}>
+              <Icon className="h-[18px] w-[18px]" />
+            </span>
+            {item.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}

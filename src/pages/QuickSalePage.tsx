@@ -5,6 +5,9 @@ import { searchProducts, totalStock, type ProductRecord } from '../lib/products'
 import { createSale, type SaleProductPayload, type SalePlotPayload } from '../lib/sales'
 import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
+import { useIsMobile } from '../hooks/useIsMobile'
+import { BarcodeScannerModal, type ScanFeedback } from '../components/pdv/BarcodeScannerModal'
+import { loadFrequentProducts, recordFrequentProduct } from '../lib/frequentProducts'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
@@ -23,7 +26,7 @@ import {
   type NfseOutcome,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
-import { formatCurrency, formatQuantity, round2 } from '../lib/format'
+import { formatCurrency, formatDateTime, formatQuantity, round2 } from '../lib/format'
 import { parseScaleLabel, resolveScaleLine, scaleConfigFrom, type ScaleLabel } from '../lib/scale'
 import { isValidConsumerDocument } from '../lib/document'
 import { formatDocument } from '../lib/formatDocument'
@@ -46,6 +49,11 @@ import {
   CreditCardIcon,
   QrCodeIcon,
   FileTextIcon,
+  CameraIcon,
+  PlusIcon,
+  MoreVerticalIcon,
+  CloseIcon,
+  WhatsappIcon,
 } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -56,6 +64,8 @@ interface QuickSalePageProps {
   onOpenCashRegister?: () => void
   terminalId?: string
   printers: PdvPrinters
+  // Avisa a tela pai quando há venda em andamento (no celular a navegação some para dar lugar ao carrinho).
+  onSaleActiveChange?: (active: boolean) => void
 }
 
 interface CartItem {
@@ -86,6 +96,8 @@ interface PaymentLine {
   form_payment: number
   name: string
   amount: number
+  // Dinheiro entregue pelo cliente (maior que o valor cobrado quando há troco).
+  received?: number
 }
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
@@ -121,7 +133,16 @@ function parseAmountInput(value: string): number {
   return Number.isNaN(num) ? 0 : num
 }
 
-export function QuickSalePage({ session, company, onExit, onOpenCashRegister, terminalId, printers }: QuickSalePageProps) {
+export function QuickSalePage({
+  session,
+  company,
+  onExit,
+  onOpenCashRegister,
+  terminalId,
+  printers,
+  onSaleActiveChange,
+}: QuickSalePageProps) {
+  const isMobile = useIsMobile()
   const myPerson = useMyCompanyPerson(session, company)
   const config = company.config
 
@@ -147,6 +168,16 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const [quantityInput, setQuantityInput] = useState('1')
   const [priceInput, setPriceInput] = useState('')
   const scanInputRef = useRef<HTMLInputElement>(null)
+  // Celular: resultados da busca em toque, mais usados, câmera, menu e cobrança em uma etapa só.
+  const [scanResults, setScanResults] = useState<LocalProduct[]>([])
+  const [frequent, setFrequent] = useState<LocalProduct[]>([])
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [missingCode, setMissingCode] = useState<string | null>(null)
+  const [payView, setPayView] = useState<'methods' | 'cash' | 'split'>('methods')
+  const [cashInput, setCashInput] = useState('')
+  const autoStarted = useRef(false)
+  const scanSeq = useRef(0)
   const [scanError, setScanError] = useState<string | null>(null)
   const scaleConfig = scaleConfigFrom(config)
 
@@ -225,11 +256,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // quando algum modal está aberto (aí o foco é do modal).
   useEffect(() => {
     if (phase === 'active' && modal === null) {
+      if (isMobile && step === 'scan') return
       scanInputRef.current?.focus()
       // Nos passos de nome, quantidade e preço o valor já vem selecionado: é só digitar por cima ou dar Enter.
       if (step !== 'scan') scanInputRef.current?.select()
     }
-  }, [phase, modal, step])
+  }, [phase, modal, step, isMobile])
 
   function resetSale() {
     setCart([])
@@ -248,6 +280,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setScanQuery('')
     setScanPreview(null)
     setScanError(null)
+    setScanResults([])
     setPendingProduct(null)
     setQuantityInput('1')
     setPriceInput('')
@@ -256,6 +289,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   function startSale() {
     setNfceNotice(null)
     resetSale()
+    setMissingCode(null)
+    setFrequent(loadFrequentProducts(company.id))
     setPhase('active')
   }
 
@@ -270,6 +305,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     unitValue: number,
     weighed?: { lineTotal: number }
   ) {
+    recordFrequentProduct(company.id, product)
+    if (isMobile) scanInputRef.current?.blur()
     setCart((prev) => {
       // Produto avulso e item pesado na balança: cada um é uma linha própria, nunca soma com outra.
       const existingIndex =
@@ -305,6 +342,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   // Busca ao vivo (offline, mesmo algoritmo do Angular) a cada tecla digitada
   // - mostra o produto encontrado antes mesmo de apertar Enter.
   async function handleScanChange(value: string) {
+    // Só a busca mais recente vale: respostas atrasadas de letras anteriores não sobrescrevem a lista.
+    const seq = ++scanSeq.current
     setScanQuery(value)
     setScanError(null)
     if (parseScaleLabel(value, scaleConfig)) {
@@ -313,10 +352,66 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     }
     if (!value.trim()) {
       setScanPreview(null)
+      setScanResults([])
       return
     }
     const results = await filterProductBy(value.trim())
+    if (seq !== scanSeq.current) return
     setScanPreview(results[0] ?? null)
+    setScanResults(results.slice(0, 12))
+  }
+
+  // Celular: toque num resultado ou num item mais usado.
+  function pickProduct(product: LocalProduct) {
+    setScanQuery('')
+    setScanPreview(null)
+    setScanResults([])
+    setScanError(null)
+    startProductFlow(product)
+  }
+
+  function changeQuantity(uid: number, delta: number) {
+    setCart((prev) =>
+      prev.map((item) => (item.uid === uid && !isWeighed(item) ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item))
+    )
+  }
+
+  function removeItem(uid: number) {
+    setCart((prev) => prev.filter((item) => item.uid !== uid))
+    setSelectedIndex(0)
+  }
+
+  // Código lido pela câmera: adiciona direto quando o produto não pede mais nada (quantidade, preço, nome).
+  async function handleCameraCode(code: string): Promise<ScanFeedback> {
+    const scaleLabel = parseScaleLabel(code, scaleConfig)
+    if (scaleLabel) {
+      const labelProduct = await findProductByCode(scaleLabel.code)
+      if (!labelProduct) return { status: 'not-found', label: `Etiqueta da balança sem produto (código ${scaleLabel.code})` }
+      const line = resolveScaleLine(scaleLabel, scaleConfig, Number(labelProduct.sale_value || 0))
+      if (!line) return { status: 'not-found', label: `${labelProduct.name}: sem preço cadastrado` }
+      addToCart(labelProduct, line.quantity, line.unitValue, { lineTotal: line.total })
+      return { status: 'added', label: `${labelProduct.name} adicionado` }
+    }
+    const wanted = code.trim().toLowerCase()
+    const product = (await filterProductBy(code.trim())).find(
+      (item) => String(item.code ?? '') === code.trim() || String(item.barcode ?? '').toLowerCase() === wanted
+    )
+    if (!product) {
+      setMissingCode(code.trim())
+      return { status: 'not-found', label: `Código ${code} não cadastrado` }
+    }
+    setMissingCode(null)
+    const needsInput =
+      Boolean(product.ask_name) ||
+      Boolean(config?.quick_sale_ask_quantity) ||
+      Boolean(config?.quick_sale_ask_price) ||
+      Number(product.sale_value || 0) <= 0
+    startProductFlow(product)
+    if (needsInput) {
+      setCameraOpen(false)
+      return { status: 'needs-input', label: product.name }
+    }
+    return { status: 'added', label: `${product.name} adicionado` }
   }
 
   function handleScanEnter() {
@@ -518,7 +613,9 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       barcode: product.barcode,
       name: product.name,
       sale_value: product.sale_value,
+      unit: product.unit,
       ask_name: product.ask_name,
+      role: product.role,
     })
   }
 
@@ -586,6 +683,10 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
 
   function openPaymentModal() {
     if (cart.length === 0) return
+    setPayView('methods')
+    setCashInput('')
+    setSubmitError(null)
+    if (isMobile) setPayments([])
     setPaymentMethodIndex(0)
     setPaymentAmountInput(remaining ? String(remaining.toFixed(2)).replace('.', ',') : '')
     setModal('payment')
@@ -731,7 +832,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       }
       return
     }
-    setModal(config?.quick_sale_ask_print_preview ? 'ask-preview' : 'receipt')
+    setModal(config?.quick_sale_ask_print_preview && !isMobile ? 'ask-preview' : 'receipt')
   }
 
   function answerNfce(emit: boolean) {
@@ -742,12 +843,66 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     proceedAfterSale()
   }
 
-  async function confirmFinalSale() {
-    if (remaining > 0 || payments.length === 0 || !myPerson) return
+  // `lines` vem pronto na cobrança em um toque do celular; sem ele vale a lista montada na tela de pagamento.
+  // Celular: tocar na forma de pagamento já quita o total e registra a venda.
+  function payFull(methodIndex: number, received?: number) {
+    const method = PAYMENT_METHODS[methodIndex]
+    const line: PaymentLine = { form_payment: method.form_payment, name: method.name, amount: total, received }
+    setPayments([line])
+    void confirmFinalSale([line])
+  }
+
+  function cashSuggestions(): number[] {
+    const notes = [5, 10, 20, 50, 100, 200]
+    const values = new Set<number>()
+    for (const note of notes) {
+      const value = Math.ceil(total / note) * note
+      if (value > total) values.add(value)
+    }
+    return [...values].sort((a, b) => a - b).slice(0, 3)
+  }
+
+  async function shareReceipt() {
+    if (!receipt) return
+    const lines = [
+      `*${receipt.companyName}*`,
+      `Venda Rápida${receipt.code ? ` #${receipt.code}` : ''} · ${formatDateTime(receipt.date)}`,
+      '',
+      ...receipt.items.map(
+        (item) => `${formatQuantity(item.quantity)}${item.unit ? ` ${item.unit.toLowerCase()}` : 'x'} ${item.name} — ${formatCurrency(item.total)}`
+      ),
+      '',
+      `*Total: ${formatCurrency(receipt.total)}*`,
+      ...receipt.payments.map((payment) => `${payment.name}: ${formatCurrency(payment.amount)}`),
+      ...(receipt.change > 0 ? [`Troco: ${formatCurrency(receipt.change)}`] : []),
+      '',
+      'Obrigado pela preferência!',
+    ]
+    const text = lines.join('\n')
+    if (navigator.share) {
+      try {
+        await navigator.share({ text })
+      } catch {
+        // compartilhamento cancelado
+      }
+      return
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noreferrer')
+  }
+
+  async function confirmFinalSale(lines: PaymentLine[] = payments) {
+    const linesPaid = round2(lines.reduce((sum, line) => sum + line.amount, 0))
+    if (lines.length === 0 || linesPaid < total) return
+    if (!myPerson) {
+      setSubmitError('Ainda carregando o seu usuário. Aguarde um instante e tente de novo.')
+      return
+    }
     setSubmitting(true)
     setSubmitError(null)
 
-    const change = paidTotal > total ? paidTotal - total : 0
+    const change =
+      lines.reduce((sum, line) => sum + Math.max(0, (line.received ?? line.amount) - line.amount), 0) +
+      (linesPaid > total ? linesPaid - total : 0)
     const now = new Date()
 
     const products: SaleProductPayload[] = cart.map((item) => ({
@@ -758,13 +913,13 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       subtotal: itemTotal(item),
     }))
 
-    const plots: SalePlotPayload[] = payments.map((payment, index) => ({
+    const plots: SalePlotPayload[] = lines.map((payment, index) => ({
       portion: index + 1,
       form_payment: payment.form_payment,
       date_due: now.toISOString().slice(0, 10),
       amount: payment.amount,
       bill_value: payment.amount,
-      change: index === payments.length - 1 ? change : 0,
+      change: index === lines.length - 1 ? change : 0,
       note: payment.name,
       status: 1,
     }))
@@ -783,8 +938,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         net_total: total,
         note: 'Venda Rápida',
         consumer_document: consumerDocument || undefined,
-        form_payment: payments[0]?.form_payment ?? 9,
-        payment_terms: Math.max(payments.length - 1, 0),
+        form_payment: lines[0]?.form_payment ?? 9,
+        payment_terms: Math.max(lines.length - 1, 0),
         products,
         plots,
       })
@@ -803,7 +958,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
           total: itemTotal(item),
         })),
         total,
-        payments: payments.map((p) => ({ name: p.name, amount: p.amount })),
+        payments: lines.map((p) => ({ name: p.name, amount: p.received ?? p.amount })),
         change,
         companySignatureUrl:
           typeof config?.autentique_signer_signature_url === 'string' ? config.autentique_signer_signature_url : null,
@@ -907,7 +1062,12 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     setNfseState(null)
     resetSale()
     setModal(null)
-    setPhase('idle')
+    if (isMobile) {
+      setFrequent(loadFrequentProducts(company.id))
+      setPhase('active')
+    } else {
+      setPhase('idle')
+    }
   }
 
   function handlePrint() {
@@ -931,6 +1091,32 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
     return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, modal, tokenAsk])
+
+  // No celular a primeira venda já abre pronta, sem tela de espera.
+  useEffect(() => {
+    if (isMobile && phase === 'idle' && !autoStarted.current) {
+      autoStarted.current = true
+      startSale()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, phase])
+
+  useEffect(() => {
+    const active = phase === 'active'
+    onSaleActiveChange?.(active)
+    if (active && isMobile) document.documentElement.setAttribute('data-mobile-sale', '')
+    else document.documentElement.removeAttribute('data-mobile-sale')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, isMobile])
+
+  useEffect(
+    () => () => {
+      onSaleActiveChange?.(false)
+      document.documentElement.removeAttribute('data-mobile-sale')
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
 
   if (phase === 'checking') {
     return (
@@ -1001,7 +1187,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {tokenAsk && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div
             className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
             tabIndex={-1}
@@ -1062,6 +1248,47 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       onSaved={handleQuickProductSaved}
     />
   )
+
+  if (phase === 'idle' && isMobile) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--page)] p-5 text-center">
+        {tokenOverlays}
+        {quickProductModal}
+        {nfceNotice && (
+          <div className="flex w-full items-start justify-between gap-3 rounded-xl bg-[var(--red-100)] px-4 py-2.5 text-left text-[12.5px] font-medium text-[var(--red-500)]">
+            <span>{nfceNotice}</span>
+            <button type="button" onClick={() => setNfceNotice(null)} className="flex-none font-bold">
+              Fechar
+            </button>
+          </div>
+        )}
+        {productNotice && (
+          <div className="w-full rounded-xl bg-[var(--green-600)] px-4 py-2.5 text-[13px] font-semibold text-white">{productNotice}</div>
+        )}
+        <span className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--blue-500)] text-white shadow-lg">
+          <CoinIcon className="h-9 w-9" />
+        </span>
+        <div>
+          <p className="text-[26px] font-bold tracking-tight text-[var(--ink)]">Venda Rápida</p>
+          <p className="mt-1 text-[14px] text-[var(--ink-soft)]">Pronta para começar</p>
+        </div>
+        <button
+          type="button"
+          onClick={startSale}
+          className="w-full max-w-xs rounded-2xl bg-[var(--blue-500)] py-4 text-[17px] font-bold text-white shadow-lg active:bg-[var(--blue-700)]"
+        >
+          Nova venda
+        </button>
+        <button
+          type="button"
+          onClick={() => openQuickProduct()}
+          className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ink-soft)]"
+        >
+          <PlusIcon className="h-4 w-4" /> Cadastrar produto ou serviço
+        </button>
+      </div>
+    )
+  }
 
   if (phase === 'idle') {
     return (
@@ -1124,15 +1351,552 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
   const StepIcon = stepIcon
   const stepLabel =
     step === 'name'
-      ? 'Digite o nome do produto'
+      ? 'Digite o nome do item'
       : step === 'quantity'
       ? 'Digite a quantidade'
       : step === 'price'
         ? 'Digite o preço'
         : 'Busque ou bipe o código do produto'
 
+  const itemCount = cart.reduce((sum, item) => sum + (isWeighed(item) ? 1 : item.quantity), 0)
+  const roundButton =
+    'flex h-11 w-11 flex-none items-center justify-center rounded-xl border border-[var(--border)] text-[var(--ink-soft)] active:bg-[var(--page)]'
+
+  const mobileSaleView = (
+    <>
+      <div className="flex flex-none items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+        <button
+          type="button"
+          aria-label="Sair da venda"
+          onClick={() => {
+            if (cart.length === 0 || window.confirm('Descartar esta venda?')) exitSale()
+          }}
+          className={roundButton}
+        >
+          <ChevronLeftIcon className="h-5 w-5" />
+        </button>
+        <button type="button" onClick={openClientModal} className="min-w-0 flex-1 text-left">
+          <p className="text-[14px] font-bold text-[var(--ink)]">Venda Rápida</p>
+          <p className="truncate text-[12px] text-[var(--ink-soft)]">
+            {client ? client.name : 'Toque para escolher o cliente'}
+            {consumerDocument && <span className="font-semibold text-[var(--blue-700)]"> · CPF na nota</span>}
+          </p>
+        </button>
+        <button
+          type="button"
+          aria-label="Ler código de barras pela câmera"
+          onClick={() => setCameraOpen(true)}
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)] active:opacity-70"
+        >
+          <CameraIcon className="h-5 w-5" />
+        </button>
+        <button type="button" aria-label="Mais opções" onClick={() => setMoreOpen(true)} className={roundButton}>
+          <MoreVerticalIcon className="h-5 w-5" />
+        </button>
+      </div>
+
+      {nfceNotice && (
+        <div className="flex flex-none items-start justify-between gap-3 bg-[var(--red-100)] px-4 py-2.5 text-[12.5px] font-medium text-[var(--red-500)]">
+          <span>{nfceNotice}</span>
+          <button type="button" onClick={() => setNfceNotice(null)} className="flex-none font-bold">
+            Fechar
+          </button>
+        </div>
+      )}
+
+      <div className="flex-none border-b border-[var(--border)] bg-[var(--surface)] px-3 pb-3 pt-3">
+        {step !== 'scan' && (
+          <div className="mb-2 px-1">
+            <p className="text-[12.5px] font-bold text-[var(--blue-700)]">{stepLabel}</p>
+            {pendingProduct && <p className="truncate text-[13px] font-semibold text-[var(--ink)]">{pendingProduct.name}</p>}
+          </div>
+        )}
+        <input
+          ref={scanInputRef}
+          type="text"
+          inputMode={step === 'scan' || step === 'name' ? 'text' : 'decimal'}
+          enterKeyHint={step === 'scan' ? 'search' : 'done'}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          value={step === 'scan' ? scanQuery : step === 'name' ? nameInput : step === 'quantity' ? quantityInput : priceInput}
+          onChange={(event) => {
+            if (step === 'scan') handleScanChange(event.target.value)
+            else if (step === 'name') setNameInput(event.target.value)
+            else if (step === 'quantity') setQuantityInput(event.target.value.replace(/[^\d,]/g, ''))
+            else setPriceInput(event.target.value.replace(/[^\d,]/g, ''))
+          }}
+          onKeyDown={handleScanKeyDown}
+          placeholder={
+            step === 'scan' ? 'Buscar produto ou serviço' : step === 'name' ? 'Nome do item' : step === 'quantity' ? '1' : '0,00'
+          }
+          className={`w-full rounded-2xl border-2 px-4 py-3.5 text-[20px] font-bold text-[var(--ink)] transition placeholder:text-[16px] placeholder:font-medium focus:outline-none ${
+            step === 'scan'
+              ? 'border-[var(--border)] bg-[var(--page)] focus:border-[var(--blue-300)]'
+              : 'border-[var(--blue-300)] bg-[var(--blue-100)] text-center'
+          }`}
+        />
+        {step !== 'scan' && (
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={resetScan}
+              className="flex-1 rounded-2xl border border-[var(--border)] py-3.5 text-[15px] font-semibold text-[var(--ink-soft)]"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (step === 'name') handleNameEnter()
+                else if (step === 'quantity') handleQuantityEnter()
+                else handlePriceEnter()
+              }}
+              className="flex-[2] rounded-2xl bg-[var(--blue-500)] py-3.5 text-[15px] font-bold text-white active:bg-[var(--blue-700)]"
+            >
+              {step === 'price' ? 'Adicionar à venda' : 'Continuar'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {step === 'scan' && scanQuery.trim() ? (
+          <div className="flex flex-col gap-2 p-3">
+            {scanError && (
+              <p className="rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--red-500)]">{scanError}</p>
+            )}
+            {scanResults.map((product) => (
+              <button
+                key={product.id}
+                type="button"
+                onClick={() => pickProduct(product)}
+                className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-left active:bg-[var(--blue-100)]"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14.5px] font-semibold text-[var(--ink)]">{product.name}</span>
+                  <span className="block text-[11.5px] text-[var(--muted)]">
+                    {Number(product.role) === 1 ? 'Serviço' : product.code ? `Cód. ${product.code}` : product.barcode || ''}
+                  </span>
+                </span>
+                <span className="flex-none text-[15px] font-bold text-[var(--green-600)]">
+                  {Number(product.sale_value || 0) > 0 ? formatCurrency(Number(product.sale_value)) : 'Informar'}
+                </span>
+              </button>
+            ))}
+            {scanResults.length === 0 && !parseScaleLabel(scanQuery, scaleConfig) && (
+              <div className="rounded-2xl border border-dashed border-[var(--border)] p-5 text-center">
+                <p className="text-[13.5px] font-semibold text-[var(--ink)]">Nenhum item encontrado</p>
+                <button
+                  type="button"
+                  onClick={() => openQuickProduct(scanQuery.trim())}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-[var(--blue-500)] px-4 py-2.5 text-[13.5px] font-bold text-white"
+                >
+                  <PlusIcon className="h-4 w-4" /> Cadastrar “{scanQuery.trim()}”
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 p-3">
+            {missingCode && (
+              <div className="flex items-center justify-between gap-3 rounded-2xl bg-[var(--amber-100)] px-4 py-3">
+                <p className="min-w-0 text-[13px] font-semibold text-[var(--ink)]">Código {missingCode} não cadastrado</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const code = missingCode
+                    setMissingCode(null)
+                    openQuickProduct(code)
+                  }}
+                  className="flex-none rounded-xl bg-[var(--blue-500)] px-3.5 py-2 text-[13px] font-bold text-white"
+                >
+                  Cadastrar
+                </button>
+              </div>
+            )}
+
+            {step === 'scan' && frequent.length > 0 && (
+              <div>
+                <p className="mb-1.5 px-1 text-[11.5px] font-bold uppercase tracking-wide text-[var(--muted)]">Mais usados · toque para vender</p>
+                <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1">
+                  {frequent.map((product) => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => pickProduct(product)}
+                      className="flex min-h-[64px] w-36 flex-none flex-col justify-between rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 text-left active:bg-[var(--blue-100)]"
+                    >
+                      <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-[var(--ink)]">{product.name}</span>
+                      <span className="mt-1 text-[13px] font-bold text-[var(--green-600)]">
+                        {Number(product.sale_value || 0) > 0 ? formatCurrency(Number(product.sale_value)) : 'Informar'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {cart.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[var(--border)] px-6 py-10 text-center text-[var(--ink-soft)]">
+                <CoinIcon className="h-8 w-8 text-[var(--muted)]" />
+                <p className="text-[14.5px] font-semibold text-[var(--ink)]">Venda vazia</p>
+                <p className="text-[12.5px]">
+                  Busque pelo nome, toque num item mais usado ou use a câmera <CameraIcon className="inline h-3.5 w-3.5" /> para ler o código de
+                  barras.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {cart.map((item) => (
+                  <div key={item.uid} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 flex-1 text-[14.5px] font-semibold leading-snug text-[var(--ink)]">{item.name}</p>
+                      <button
+                        type="button"
+                        aria-label={`Remover ${item.name}`}
+                        onClick={() => removeItem(item.uid)}
+                        className="-mr-1 -mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl text-[var(--red-500)] active:bg-[var(--red-100)]"
+                      >
+                        <TrashIcon className="h-[18px] w-[18px]" />
+                      </button>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-3">
+                      {isWeighed(item) ? (
+                        <p className="text-[13px] text-[var(--ink-soft)]">
+                          {formatQuantity(item.quantity)} {item.unit?.toLowerCase()} · balança
+                        </p>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            aria-label="Diminuir quantidade"
+                            onClick={() => changeQuantity(item.uid, -1)}
+                            disabled={item.quantity <= 1}
+                            className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] text-[22px] font-bold text-[var(--ink)] active:bg-[var(--page)] disabled:opacity-35"
+                          >
+                            −
+                          </button>
+                          <span className="min-w-[2.75rem] text-center text-[17px] font-bold text-[var(--ink)]">{formatQuantity(item.quantity)}</span>
+                          <button
+                            type="button"
+                            aria-label="Aumentar quantidade"
+                            onClick={() => changeQuantity(item.uid, 1)}
+                            className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] text-[22px] font-bold text-[var(--ink)] active:bg-[var(--page)]"
+                          >
+                            +
+                          </button>
+                        </div>
+                      )}
+                      <div className="text-right">
+                        <p className="text-[11.5px] text-[var(--muted)]">{formatCurrency(item.unitValue)} cada</p>
+                        <p className="text-[17px] font-bold text-[var(--ink)]">{formatCurrency(itemTotal(item))}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex-none border-t border-[var(--border)] bg-[var(--surface)] px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <button
+          type="button"
+          onClick={openPaymentModal}
+          disabled={cart.length === 0}
+          className="flex w-full items-center justify-between rounded-2xl bg-[var(--blue-500)] px-5 py-4 text-white shadow-lg active:bg-[var(--blue-700)] disabled:opacity-45"
+        >
+          <span className="text-[13.5px] font-semibold">
+            {itemCount} {itemCount === 1 ? 'item' : 'itens'}
+          </span>
+          <span className="text-[20px] font-bold">Cobrar {formatCurrency(total)}</span>
+        </button>
+      </div>
+
+      <NfceHistoryModal
+        open={nfceHistoryOpen}
+        session={session}
+        company={company}
+        printerId={nfcePrinterId}
+        onClose={() => setNfceHistoryOpen(false)}
+      />
+      <PrintHistoryModal open={printHistoryOpen} session={session} company={company} onClose={() => setPrintHistoryOpen(false)} />
+
+      {moreOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={() => setMoreOpen(false)}>
+          <div
+            className="rounded-t-3xl bg-[var(--surface)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[var(--border)]" />
+            <div className="flex flex-col gap-1">
+              {[
+                { label: client ? `Cliente: ${client.name}` : 'Escolher cliente', icon: UserIcon, onClick: openClientModal, show: true },
+                {
+                  label: consumerDocument ? `CPF na nota: ${formatDocument(consumerDocument)}` : 'CPF/CNPJ na nota',
+                  icon: FileTextIcon,
+                  onClick: openCpfModal,
+                  show: true,
+                },
+                { label: 'Cadastrar produto ou serviço', icon: PlusIcon, onClick: () => openQuickProduct(), show: true },
+                { label: 'Consultar produtos', icon: SearchIcon, onClick: openProductModal, show: true },
+                { label: 'NFC-e emitidas', icon: FileTextIcon, onClick: () => setNfceHistoryOpen(true), show: nfceMode !== 'off' },
+                { label: 'Impressões', icon: PrinterIcon, onClick: () => setPrintHistoryOpen(true), show: Boolean(receiptPrinterId || nfcePrinterId) },
+                {
+                  label: 'Limpar a venda',
+                  icon: TrashIcon,
+                  onClick: () => {
+                    if (window.confirm('Descartar todos os itens desta venda?')) resetSale()
+                  },
+                  show: cart.length > 0,
+                  danger: true,
+                },
+              ]
+                .filter((entry) => entry.show)
+                .map((entry) => {
+                  const Icon = entry.icon
+                  return (
+                    <button
+                      key={entry.label}
+                      type="button"
+                      onClick={() => {
+                        setMoreOpen(false)
+                        entry.onClick()
+                      }}
+                      className={`flex min-h-14 items-center gap-3 rounded-2xl px-3 text-left text-[15px] font-semibold active:bg-[var(--page)] ${
+                        entry.danger ? 'text-[var(--red-500)]' : 'text-[var(--ink)]'
+                      }`}
+                    >
+                      <Icon className="h-5 w-5 flex-none" />
+                      <span className="min-w-0 truncate">{entry.label}</span>
+                    </button>
+                  )
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+
+  const mobilePaymentSheet = modal === 'payment' && isMobile && (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={() => !submitting && setModal(null)}>
+      <div
+        className="max-h-[94svh] overflow-y-auto rounded-t-3xl bg-[var(--surface)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[var(--border)]" />
+        <div className="text-center">
+          <p className="text-[12.5px] font-semibold text-[var(--muted)]">Total a cobrar</p>
+          <p className="text-[36px] font-bold leading-tight text-[var(--ink)]">{formatCurrency(total)}</p>
+          {payView === 'split' && payments.length > 0 && (
+            <p className="text-[13px] font-semibold text-[var(--red-500)]">Falta {formatCurrency(remaining)}</p>
+          )}
+        </div>
+
+        {submitError && (
+          <p className="mt-3 rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--red-500)]">{submitError}</p>
+        )}
+
+        {submitting ? (
+          <div className="py-10 text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-[3px] border-[var(--border)] border-t-[var(--blue-500)]" />
+            <p className="mt-3 text-[14px] font-semibold text-[var(--ink)]">Registrando a venda…</p>
+          </div>
+        ) : payView === 'methods' ? (
+          <>
+            <p className="mt-3 text-center text-[13px] font-semibold text-[var(--ink-soft)]">Toque na forma de pagamento para finalizar</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {PAYMENT_METHODS.map((method, index) => {
+                const MethodIcon = method.icon
+                return (
+                  <button
+                    key={method.key}
+                    type="button"
+                    onClick={() => {
+                      if (method.key === 'N') {
+                        setCashInput('')
+                        setPayView('cash')
+                      } else {
+                        payFull(index)
+                      }
+                    }}
+                    className="flex h-24 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-[var(--border)] text-[15px] font-bold text-[var(--ink)] active:border-[var(--blue-500)] active:bg-[var(--blue-100)]"
+                  >
+                    <MethodIcon className="h-6 w-6 text-[var(--blue-700)]" />
+                    {method.name}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setPayments([])
+                setPaymentMethodIndex(0)
+                setPaymentAmountInput(String(total.toFixed(2)).replace('.', ','))
+                setPayView('split')
+              }}
+              className="mt-3 w-full rounded-2xl py-3.5 text-[14px] font-semibold text-[var(--blue-700)] active:bg-[var(--blue-100)]"
+            >
+              Dividir em mais de uma forma de pagamento
+            </button>
+          </>
+        ) : payView === 'cash' ? (
+          <>
+            <p className="mt-3 text-center text-[13px] font-semibold text-[var(--ink-soft)]">Quanto o cliente entregou?</p>
+            <div className="mt-3 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => payFull(0, total)}
+                className="col-span-2 rounded-2xl bg-[var(--blue-500)] py-4 text-[16px] font-bold text-white active:bg-[var(--blue-700)]"
+              >
+                Valor exato · {formatCurrency(total)}
+              </button>
+              {cashSuggestions().map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => payFull(0, value)}
+                  className="rounded-2xl border-2 border-[var(--border)] py-3.5 text-[15px] font-bold text-[var(--ink)] active:border-[var(--blue-500)] active:bg-[var(--blue-100)]"
+                >
+                  {formatCurrency(value)}
+                  <span className="block text-[11.5px] font-semibold text-[var(--muted)]">troco {formatCurrency(value - total)}</span>
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={cashInput}
+              placeholder="Outro valor"
+              enterKeyHint="done"
+              onChange={(event) => setCashInput(event.target.value.replace(/[^\d,]/g, ''))}
+              className="mt-3 w-full rounded-2xl bg-[var(--page)] px-4 py-3.5 text-center text-[20px] font-bold text-[var(--ink)] focus:outline-none"
+            />
+            {parseAmountInput(cashInput) >= total && parseAmountInput(cashInput) > 0 && (
+              <>
+                <p className="mt-2 text-center text-[14px] font-bold text-[var(--green-600)]">
+                  Troco: {formatCurrency(parseAmountInput(cashInput) - total)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => payFull(0, parseAmountInput(cashInput))}
+                  className="mt-2 w-full rounded-2xl bg-[var(--blue-500)] py-4 text-[16px] font-bold text-white active:bg-[var(--blue-700)]"
+                >
+                  Confirmar recebimento
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setPayView('methods')}
+              className="mt-2 w-full py-3 text-[14px] font-semibold text-[var(--ink-soft)]"
+            >
+              Voltar
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {PAYMENT_METHODS.map((method, index) => (
+                <button
+                  key={method.key}
+                  type="button"
+                  onClick={() => setPaymentMethodIndex(index)}
+                  className={`rounded-xl border-2 px-1 py-3 text-[12.5px] font-bold ${
+                    index === paymentMethodIndex
+                      ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                      : 'border-[var(--border)] text-[var(--ink-soft)]'
+                  }`}
+                >
+                  {method.name}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <input
+                ref={paymentAmountRef}
+                type="text"
+                inputMode="decimal"
+                value={paymentAmountInput}
+                enterKeyHint="done"
+                onChange={(event) => setPaymentAmountInput(event.target.value.replace(/[^\d,]/g, ''))}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    addPaymentLine()
+                  }
+                }}
+                className="min-w-0 flex-1 rounded-2xl bg-[var(--page)] px-4 py-3.5 text-center text-[20px] font-bold text-[var(--ink)] focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={addPaymentLine}
+                disabled={remaining <= 0}
+                className="flex-none rounded-2xl bg-[var(--blue-100)] px-5 text-[14px] font-bold text-[var(--blue-700)] disabled:opacity-45"
+              >
+                Adicionar
+              </button>
+            </div>
+            {payments.length > 0 && (
+              <div className="mt-3 flex flex-col gap-1.5">
+                {payments.map((payment, index) => (
+                  <div key={index} className="flex items-center justify-between rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px]">
+                    <span className="font-semibold text-[var(--ink)]">{payment.name}</span>
+                    <span className="flex items-center gap-2 font-bold text-[var(--ink)]">
+                      {formatCurrency(payment.amount)}
+                      <button
+                        type="button"
+                        aria-label={`Remover pagamento ${payment.name}`}
+                        onClick={() => setPayments((prev) => prev.filter((_, lineIndex) => lineIndex !== index))}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--red-500)]"
+                      >
+                        <CloseIcon className="h-4 w-4" />
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void confirmFinalSale()}
+              disabled={remaining > 0 || payments.length === 0}
+              className="mt-3 w-full rounded-2xl bg-[var(--blue-500)] py-4 text-[16px] font-bold text-white active:bg-[var(--blue-700)] disabled:opacity-45"
+            >
+              Finalizar venda
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPayments([])
+                setPayView('methods')
+              }}
+              className="mt-2 w-full py-3 text-[14px] font-semibold text-[var(--ink-soft)]"
+            >
+              Voltar
+            </button>
+          </>
+        )}
+
+        {!submitting && payView === 'methods' && (
+          <button type="button" onClick={() => setModal(null)} className="w-full py-3 text-[14px] font-semibold text-[var(--ink-soft)]">
+            Voltar para a venda
+          </button>
+        )}
+      </div>
+    </div>
+  )
+
   return (
     <div className="relative flex h-full flex-col">
+      {isMobile ? (
+        mobileSaleView
+      ) : (
+        <>
       <div className="flex flex-none items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3">
         <div className="flex items-center gap-3">
           <button
@@ -1334,13 +2098,16 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </button>
       </div>
 
+        </>
+      )}
+
       {modal === 'product' && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-16" onClick={() => setModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-3 pt-4 sm:pt-16" onClick={() => setModal(null)}>
           <div
             className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-3 border-b border-[var(--border)] p-4">
+            <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] p-4">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)]">
                 <BoxIcon className="h-5 w-5" />
               </span>
@@ -1370,7 +2137,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                     setProductModalIndex((prev) => Math.max(prev - 1, 0))
                   }
                 }}
-                className="w-56 flex-none rounded-xl bg-[var(--page)] px-3.5 py-2 text-[13.5px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
+                className="w-full flex-none rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[13.5px] sm:w-56 sm:py-2 text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
               />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1419,7 +2186,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {modal === 'client' && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-16" onClick={() => setModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-3 pt-4 sm:pt-16" onClick={() => setModal(null)}>
           <div
             className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
             onClick={(e) => e.stopPropagation()}
@@ -1438,7 +2205,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
               />
             ) : (
               <>
-            <div className="flex items-center gap-3 border-b border-[var(--border)] p-4">
+            <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] p-4">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-[var(--blue-100)] text-[var(--blue-700)]">
                 <UserIcon className="h-5 w-5" />
               </span>
@@ -1471,7 +2238,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                     setClientIndex((prev) => Math.max(prev - 1, 0))
                   }
                 }}
-                className="w-56 flex-none rounded-xl bg-[var(--page)] px-3.5 py-2 text-[13.5px] text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
+                className="w-full flex-none rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[13.5px] sm:w-56 sm:py-2 text-[var(--ink)] ring-1 ring-transparent focus:outline-none focus:ring-[var(--blue-300)]"
               />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1525,7 +2292,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       {quickProductModal}
 
       {modal === 'cpf' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setModal(null)}>
           <div className="w-full max-w-sm rounded-2xl bg-[var(--surface)] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <p className="text-[14.5px] font-bold text-[var(--ink)]">CPF na nota</p>
             <p className="mt-0.5 text-[11.5px] text-[var(--ink-soft)]">
@@ -1587,7 +2354,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {modal === 'remove-confirm' && cart[selectedIndex] && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
             className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
             tabIndex={-1}
@@ -1629,8 +2396,10 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </div>
       )}
 
-      {modal === 'payment' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      {mobilePaymentSheet}
+
+      {modal === 'payment' && !isMobile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] p-5 shadow-xl">
             <div className="mb-4 grid grid-cols-3 gap-3 text-center">
               <div>
@@ -1735,7 +2504,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
               </button>
               <button
                 type="button"
-                onClick={confirmFinalSale}
+                onClick={() => void confirmFinalSale()}
                 disabled={remaining > 0 || payments.length === 0 || submitting}
                 className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white disabled:opacity-50"
               >
@@ -1747,7 +2516,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {modal === 'ask-nfce' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
             className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
             tabIndex={-1}
@@ -1784,7 +2553,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {modal === 'ask-nfse' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
             className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
             tabIndex={-1}
@@ -1886,7 +2655,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
                     onClick={() => savedSale && continueAfterNfse(savedSale)}
                     className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
                   >
-                    Continuar (Enter)
+                    Continuar
                   </button>
                   {nfseState.outcome?.pdfUrl && (
                     <a
@@ -2003,6 +2772,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
         </div>
       )}
 
+      {cameraOpen && <BarcodeScannerModal onDetected={handleCameraCode} onClose={() => setCameraOpen(false)} />}
+
       {tokenOverlays}
 
       {printerNotice && (
@@ -2015,7 +2786,7 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
       )}
 
       {modal === 'ask-preview' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
             className="w-full max-w-xs rounded-2xl bg-[var(--surface)] p-5 text-center shadow-xl"
             tabIndex={-1}
@@ -2066,8 +2837,8 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
             }}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
-              <p className="text-[13.5px] font-bold text-[var(--ink)]">Pré-visualização do comprovante</p>
-              <p className="text-[11px] text-[var(--muted)]">
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">Comprovante da venda</p>
+              <p className="hidden text-[11px] text-[var(--muted)] sm:block">
                 Modelo: {config?.quick_sale_print_model === 'a4' ? 'Folha A4' : 'Impressora térmica'}
               </p>
             </div>
@@ -2089,22 +2860,44 @@ export function QuickSalePage({ session, company, onExit, onOpenCashRegister, te
               <QuickSaleReceipt data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
               <QuickSalePrintPortal data={receipt} printModel={config?.quick_sale_print_model ?? 'thermal'} />
             </div>
-            <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
-              <button
-                type="button"
-                onClick={closeReceiptAndReset}
-                className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
-              >
-                Fechar (Esc)
-              </button>
-              <button
-                type="button"
-                onClick={handlePrint}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
-              >
-                <PrinterIcon className="h-3.5 w-3.5" /> Imprimir
-              </button>
-            </div>
+            {isMobile ? (
+              <div className="flex flex-col gap-2 border-t border-[var(--border)] p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+                <p className="text-center text-[13px] font-bold text-[var(--green-600)]">Venda registrada!</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void shareReceipt()}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-[var(--border)] py-3.5 text-[14px] font-bold text-[var(--ink)]"
+                  >
+                    <WhatsappIcon className="h-4 w-4" /> Compartilhar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeReceiptAndReset}
+                    className="flex flex-[1.4] items-center justify-center gap-2 rounded-2xl bg-[var(--blue-500)] py-3.5 text-[15px] font-bold text-white active:bg-[var(--blue-700)]"
+                  >
+                    <PlusIcon className="h-4 w-4" /> Nova venda
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
+                <button
+                  type="button"
+                  onClick={closeReceiptAndReset}
+                  className="flex-1 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+                >
+                  Fechar (Esc)
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
+                >
+                  <PrinterIcon className="h-3.5 w-3.5" /> Imprimir
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -9,12 +9,12 @@ import { CashRegisterPage } from './CashRegisterPage'
 import { TerminalPickerPage } from './TerminalPickerPage'
 import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
-import { Sidebar, type PdvScreen } from '../components/pdv/Sidebar'
+import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { updateDeliveryOrderStatus, fetchIfoodCancellationReasons, cancelIfoodOrder } from '../lib/foodApi'
 import { isIfoodOrder, newLocalId } from '../lib/foodTypes'
-import { countProducts } from '../lib/db'
+import { catalogLacksRole, countProducts } from '../lib/db'
 import {
   fetchCompanyTerminals,
   loadSelectedTerminalId,
@@ -52,6 +52,8 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('checking')
   const [screen, setScreen] = useState<PdvScreen>(quickSaleOnlyMode ? 'quick-sale' : 'tables')
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('catalog')
+  // Venda em andamento no celular: a barra de navegação sai para dar lugar ao carrinho.
+  const [saleActive, setSaleActive] = useState(false)
 
   // Terminal (PDV) escolhido pra este computador - quando tem um configurado
   // com servidor local próprio, a NFC-e passa a ser gerada por ele em vez do
@@ -127,8 +129,9 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
 
   useEffect(() => {
     let cancelled = false
-    countProducts().then((count) => {
-      if (!cancelled) setSyncStatus(count > 0 ? 'ready' : 'needs-sync')
+    // Catálogo baixado por uma versão antiga não guarda se o item é produto ou serviço: baixa de novo.
+    Promise.all([countProducts(), catalogLacksRole()]).then(([count, outdated]) => {
+      if (!cancelled) setSyncStatus(count > 0 && !outdated ? 'ready' : 'needs-sync')
     })
     return () => {
       cancelled = true
@@ -274,8 +277,19 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
 
   const homeScreen: PdvScreen = quickSaleOnlyMode ? 'quick-sale' : 'tables'
 
+  const navProps = {
+    screen,
+    onNavigate: setScreen,
+    showTables: !quickSaleOnlyMode,
+    showQuickSale: quickSaleEnabled,
+    showNfce: nfceEnabled,
+    showCashRegister: cashRegisterEnabled,
+    showTokens: quickSaleEnabled,
+    showSalesHistory: quickSaleEnabled,
+  }
+
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col md:flex-row">
       <Sidebar
         screen={screen}
         onNavigate={setScreen}
@@ -356,6 +370,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onOpenCashRegister={cashRegisterEnabled ? () => setScreen('cash-register') : undefined}
             terminalId={activeTerminalId}
             printers={printers}
+            onSaleActiveChange={setSaleActive}
           />
         ) : screen === 'sales' ? (
           <SalesHistoryPage session={session} company={company} printers={printers} />
@@ -377,6 +392,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
           />
         )}
       </div>
+      {!(saleActive && screen === 'quick-sale') && <MobileNav {...navProps} />}
     </div>
   )
 }

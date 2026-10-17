@@ -186,3 +186,26 @@ body {
   top: 0;
   visibility: hidden;
 }
+
+/* Celular: venda em andamento ocupa a tela toda (sem o cabeçalho do aplicativo) e os campos não dão zoom ao focar. */
+@media (max-width: 767px) {
+  :root[data-mobile-sale] .app-header {
+    display: none;
+  }
+
+  input:not([type='checkbox']):not([type='radio']):not([class*='text-[20px]']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  button,
+  [role='button'] {
+    touch-action: manipulation;
+  }
+}
+
+html,
+body {
+  overscroll-behavior-y: none;
+}

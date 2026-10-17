@@ -28,6 +28,8 @@ export function QuickProductCreate({ token, companyId, initialBarcode, initialNa
   const [name, setName] = useState(initialName)
   const [price, setPrice] = useState('')
   const [unit, setUnit] = useState<'UN' | 'KG'>('UN')
+  // Serviço é o que entra na nota de serviço (NFS-e).
+  const [role, setRole] = useState<0 | 1>(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -66,7 +68,7 @@ export function QuickProductCreate({ token, companyId, initialBarcode, initialNa
     try {
       const created = await createProduct(token, {
         company_id: companyId,
-        role: 0,
+        role,
         name: cleanName,
         barcode: barcode.trim() || undefined,
         sale_value: value,
@@ -79,6 +81,7 @@ export function QuickProductCreate({ token, companyId, initialBarcode, initialNa
         name: created.name,
         sale_value: Number(created.sale_value ?? value),
         unit: created.unit ?? unit,
+        role,
       }
       await batchInsertProducts([local])
       onSaved(local)
@@ -105,7 +108,7 @@ export function QuickProductCreate({ token, companyId, initialBarcode, initialNa
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
         <p className="text-[14.5px] font-bold text-[var(--ink)]">Cadastro rápido de produto</p>
         <p className="mt-0.5 text-[11.5px] text-[var(--ink-soft)]">
@@ -113,6 +116,28 @@ export function QuickProductCreate({ token, companyId, initialBarcode, initialNa
         </p>
 
         <div className="mt-3 flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { value: 0, label: 'Produto' },
+                { value: 1, label: 'Serviço' },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                tabIndex={-1}
+                onClick={() => setRole(option.value)}
+                className={`rounded-xl border px-3 py-2.5 text-[13px] font-bold transition ${
+                  role === option.value
+                    ? 'border-[var(--blue-500)] bg-[var(--blue-100)] text-[var(--blue-700)]'
+                    : 'border-[var(--border)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11.5px] font-semibold text-[var(--ink-soft)]">Código de barras</span>
             <input

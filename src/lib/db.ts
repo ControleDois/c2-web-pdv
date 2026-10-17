@@ -58,6 +58,14 @@ export async function countProducts(): Promise<number> {
   return db.transaction('products').objectStore('products').count()
 }
 
+// Catálogo salvo antes de a sincronização guardar o tipo (produto/serviço): precisa baixar de novo.
+export async function catalogLacksRole(): Promise<boolean> {
+  const db = await getDb()
+  const cursor = await db.transaction('products').objectStore('products').openCursor()
+  if (!cursor) return false
+  return (cursor.value as LocalProduct).role === undefined
+}
+
 // Mesmo algoritmo do Angular (IndexedDbService.filterProductBy): código
 // exato primeiro, depois barcode exato, senão nome por substring (pode
 // retornar vários — quem chama decide o que fazer com isso).
