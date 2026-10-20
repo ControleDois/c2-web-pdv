@@ -209,3 +209,23 @@ html,
 body {
   overscroll-behavior-y: none;
 }
+
+/* Telas de 768 a 1100 px (notebook pequeno, tablet deitado): a interface inteira encolhe para 85%, como se a tela
+   fosse maior. As alturas "da janela" são divididas pelo mesmo fator para o app continuar ocupando a tela toda. */
+@media screen and (min-width: 768px) and (max-width: 1100px) {
+  :root {
+    --ui-zoom: 0.85;
+    zoom: var(--ui-zoom);
+  }
+
+  .h-svh,
+  .h-dvh,
+  .h-screen {
+    height: calc(100dvh / var(--ui-zoom));
+  }
+
+  .min-h-svh,
+  .min-h-screen {
+    min-height: calc(100dvh / var(--ui-zoom));
+  }
+}
