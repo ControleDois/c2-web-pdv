@@ -130,6 +130,8 @@ export function fetchProducts(
       limit: options.limit ? String(options.limit) : '10',
       role: options.role !== undefined ? String(options.role) : undefined,
       stock: options.stock ? 'true' : undefined,
+      // Insumo (matéria-prima) não se vende no balcão: nunca vem para o PDV.
+      ingredient: 'false',
     },
     token
   )
