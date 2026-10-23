@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NfceWhatsappModal } from './NfceWhatsappModal'
+import { NfceViewerModal } from './NfceViewerModal'
 import {
   fetchNfceDetails,
   fetchNfceHistory,
@@ -12,7 +13,7 @@ import {
 } from '../../lib/nfce'
 import { buildNfceDocument, createPrintJob } from '../../lib/printing'
 import { ApiError } from '../../lib/api'
-import { CloseIcon, FileTextIcon, RefreshIcon, WhatsappIcon } from '../icons'
+import { CloseIcon, EyeIcon, FileTextIcon, RefreshIcon, WhatsappIcon } from '../icons'
 import type { AuthSession, AuthCompany } from '../../lib/auth'
 
 interface NfceHistoryModalProps {
@@ -49,6 +50,7 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
   const [retryNotice, setRetryNotice] = useState<Record<string, string>>({})
   const [printingId, setPrintingId] = useState<string | null>(null)
   const [whatsappItem, setWhatsappItem] = useState<NfceHistoryItem | null>(null)
+  const [viewItem, setViewItem] = useState<NfceHistoryItem | null>(null)
 
   function load() {
     setLoading(true)
@@ -198,12 +200,22 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
                       <p className="mt-2 text-[11.5px] font-medium text-[var(--ink-soft)]">{retryNotice[item.id]}</p>
                     )}
 
+                    {item.status === 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setViewItem(item)}
+                        className="mt-2 mr-2 inline-flex items-center gap-1.5 rounded-lg bg-[var(--blue-500)] px-3 py-1.5 text-[11.5px] font-bold text-white hover:bg-[var(--blue-700)]"
+                      >
+                        <EyeIcon className="h-3.5 w-3.5" /> Ver cupom (DANFE)
+                      </button>
+                    )}
+
                     {item.status === 2 && printerId && (
                       <button
                         type="button"
                         onClick={() => void handlePrint(item)}
                         disabled={printingId === item.id}
-                        className="mt-2 rounded-lg bg-[var(--blue-500)] px-3 py-1.5 text-[11.5px] font-bold text-white hover:bg-[var(--blue-700)] disabled:opacity-60"
+                        className="mt-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11.5px] font-bold text-[var(--ink)] hover:bg-[var(--page)] disabled:opacity-60"
                       >
                         {printingId === item.id ? 'Enviando…' : 'Imprimir / reimprimir'}
                       </button>
@@ -213,7 +225,7 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
                       <button
                         type="button"
                         onClick={() => setWhatsappItem(item)}
-                        className="mt-2 ml-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11.5px] font-bold text-[var(--green-600)]"
+                        className="mt-2 ml-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11.5px] font-bold text-[var(--green-600)] hover:bg-[var(--page)]"
                       >
                         <WhatsappIcon className="h-3.5 w-3.5" /> Enviar no WhatsApp
                       </button>
@@ -242,6 +254,16 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
           )}
         </div>
       </div>
+      {viewItem && (
+        <NfceViewerModal
+          token={token}
+          companyId={company.id}
+          item={viewItem}
+          printerId={printerId}
+          onWhatsapp={(target) => setWhatsappItem(target)}
+          onClose={() => setViewItem(null)}
+        />
+      )}
       {whatsappItem && (
         <NfceWhatsappModal
           token={token}

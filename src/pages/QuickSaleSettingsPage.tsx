@@ -1,3 +1,4 @@
+import { Select } from '../components/form/Select'
 import { useEffect, useState } from 'react'
 import { updateConfig } from '../lib/config'
 import { fetchActivePrinters, type PrinterOption } from '../lib/printing'
@@ -204,18 +205,14 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             ].map((field) => (
               <label key={field.label} className="flex flex-col gap-1.5">
                 <span className="text-[12px] font-semibold text-[var(--ink-soft)]">{field.label}</span>
-                <select
-                  value={field.value}
-                  onChange={(event) => field.set(event.target.value)}
-                  className="rounded-xl bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-300)]"
-                >
+                <Select value={field.value} onChange={field.set} allowEmpty>
                   <option value="">Mostrar preview (sem impressora)</option>
                   {printers.map((printer) => (
                     <option key={printer.id} value={printer.id}>
                       {printer.name} — {printer.path}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             ))}
           </div>

@@ -1,3 +1,4 @@
+import { Select } from '../components/form/Select'
 import { useEffect, useState } from 'react'
 import {
   fetchCashRegisterStatus,
@@ -209,18 +210,14 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
         <div className="flex max-w-lg flex-col gap-3.5">
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="mb-1 text-[12.5px] font-bold text-[var(--ink)]">Gerente</p>
-            <select
-              value={managerId}
-              onChange={(event) => setManagerId(event.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-[13px] text-[var(--ink)] outline-none focus:border-[var(--blue-500)]"
-            >
+            <Select value={managerId} onChange={setManagerId} placeholder="Selecione o gerente">
               <option value="">Selecione…</option>
               {managers.map((person) => (
                 <option key={person.id} value={person.id}>
                   {person.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <input
               type="password"
               placeholder="Senha do gerente"
@@ -232,18 +229,14 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
 
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="mb-1 text-[12.5px] font-bold text-[var(--ink)]">Operador</p>
-            <select
-              value={operatorId}
-              onChange={(event) => setOperatorId(event.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-[13px] text-[var(--ink)] outline-none focus:border-[var(--blue-500)]"
-            >
+            <Select value={operatorId} onChange={setOperatorId} placeholder="Selecione o operador">
               <option value="">Selecione…</option>
               {operators.map((person) => (
                 <option key={person.id} value={person.id}>
                   {person.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <input
               type="password"
               placeholder="Senha do operador"

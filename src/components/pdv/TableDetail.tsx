@@ -1,3 +1,4 @@
+import { Select } from '../form/Select'
 import { useEffect, useRef, useState } from 'react'
 import type { FoodTable, FoodTableItem, FoodTablePayment } from '../../lib/foodTypes'
 import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId, PAYMENT_METHODS } from '../../lib/foodTypes'
@@ -678,17 +679,13 @@ export function TableDetail({
             <p className="mt-1 text-[13px] text-[var(--ink-soft)]">A receber: {formatCurrency(receiveTotal)}</p>
 
             <div className="mt-3 flex items-center gap-2">
-              <select
-                value={receiveMethod}
-                onChange={(event) => setReceiveMethod(Number(event.target.value))}
-                className="rounded-xl border border-[var(--border)] bg-[var(--page)] px-2.5 py-2 text-[13px] text-[var(--ink)]"
-              >
+              <Select value={receiveMethod} onChange={(value) => setReceiveMethod(Number(value))} className="w-40 flex-none">
                 {PAYMENT_METHODS.map((method) => (
                   <option key={method.value} value={method.value}>
                     {method.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               <input
                 type="text"
                 inputMode="decimal"

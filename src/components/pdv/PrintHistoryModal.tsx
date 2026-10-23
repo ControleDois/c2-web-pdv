@@ -1,3 +1,4 @@
+import { Select } from '../form/Select'
 import { useEffect, useState } from 'react'
 import { fetchActivePrinters, fetchPrintJobs, reprintJob, type PrintJobItem, type PrinterOption } from '../../lib/printing'
 import { ApiError } from '../../lib/api'
@@ -182,17 +183,13 @@ export function PrintHistoryModal({ open, session, company, onClose }: PrintHist
 
                     {picking === job.id && (
                       <div className="mt-2 flex items-center gap-2">
-                        <select
-                          value={targetPrinter}
-                          onChange={(event) => setTargetPrinter(event.target.value)}
-                          className="min-w-0 flex-1 rounded-lg bg-[var(--page)] px-3 py-2 text-[12.5px] text-[var(--ink)] focus:outline-none"
-                        >
+                        <Select value={targetPrinter} onChange={setTargetPrinter} className="min-w-0 flex-1">
                           {printers.map((printer) => (
                             <option key={printer.id} value={printer.id}>
                               {printer.name}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                         <button
                           type="button"
                           onClick={() => void handleReprint(job, targetPrinter)}
