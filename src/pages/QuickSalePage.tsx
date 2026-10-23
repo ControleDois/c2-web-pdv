@@ -13,6 +13,7 @@ import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
+import { NfceWhatsappModal } from '../components/pdv/NfceWhatsappModal'
 import {
   fetchNfceDetails,
   fetchNfceQrCode,
@@ -121,6 +122,7 @@ interface NfceState {
   number?: number
   details?: NfceDetails
   qrCodeUrl?: string | null
+  nfeId?: string
 }
 
 const PAYMENT_METHODS = [
@@ -212,6 +214,8 @@ export function QuickSalePage({
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
   const [savedSale, setSavedSale] = useState<{ id: string; code?: number } | null>(null)
   const [nfceState, setNfceState] = useState<NfceState | null>(null)
+  const [nfceWhatsappOpen, setNfceWhatsappOpen] = useState(false)
+  const [nfceSentNote, setNfceSentNote] = useState<string | null>(null)
   const [nfseState, setNfseState] = useState<NfseState | null>(null)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
@@ -716,6 +720,7 @@ export function QuickSalePage({
   // Delphi/ACBr, que saía em A4/layout de NF-e normal, não de cupom.
   async function emitNfce(sale: { id: string; code?: number }) {
     setModal('nfce')
+    setNfceSentNote(null)
     setNfceState({ status: 'sending', message: 'Enviando NFC-e…' })
     try {
       const result = await generateNfceFromSale(session.token.token, sale.id, terminalId)
@@ -735,6 +740,7 @@ export function QuickSalePage({
         status: 'authorized',
         message: 'NFC-e autorizada.',
         number: outcome.number,
+        nfeId,
         details,
         qrCodeUrl: qrCode?.url ?? null,
       })
@@ -2756,6 +2762,11 @@ export function QuickSalePage({
                     NFC-e autorizada, mas não foi possível carregar o cupom. Consulte em Notas Fiscais.
                   </p>
                 )}
+                {nfceSentNote && (
+                  <p className="border-t border-[var(--border)] px-5 py-2 text-center text-[12.5px] font-semibold text-[var(--green-600)]">
+                    {nfceSentNote}
+                  </p>
+                )}
                 <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
                   <button
                     type="button"
@@ -2764,6 +2775,15 @@ export function QuickSalePage({
                   >
                     Continuar (Esc)
                   </button>
+                  {nfceState.nfeId && (
+                    <button
+                      type="button"
+                      onClick={() => setNfceWhatsappOpen(true)}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-bold text-[var(--green-600)]"
+                    >
+                      <WhatsappIcon className="h-4 w-4" /> WhatsApp
+                    </button>
+                  )}
                   {nfceState.details && (
                     <button
                       type="button"
@@ -2779,6 +2799,22 @@ export function QuickSalePage({
             )}
           </div>
         </div>
+      )}
+
+      {nfceWhatsappOpen && nfceState?.nfeId && (
+        <NfceWhatsappModal
+          token={session.token.token}
+          companyId={company.id}
+          nfeId={nfceState.nfeId}
+          numero={nfceState.number ?? nfceState.details?.numero}
+          defaultName={client?.name}
+          defaultPhone={client?.phone ? String(client.phone) : undefined}
+          onClose={() => setNfceWhatsappOpen(false)}
+          onSent={(message) => {
+            setNfceWhatsappOpen(false)
+            setNfceSentNote(message)
+          }}
+        />
       )}
 
       {cameraOpen && <BarcodeScannerModal onDetected={handleCameraCode} onClose={() => setCameraOpen(false)} />}

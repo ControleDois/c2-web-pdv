@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { NfceWhatsappModal } from './NfceWhatsappModal'
 import {
   fetchNfceDetails,
   fetchNfceHistory,
@@ -11,7 +12,7 @@ import {
 } from '../../lib/nfce'
 import { buildNfceDocument, createPrintJob } from '../../lib/printing'
 import { ApiError } from '../../lib/api'
-import { CloseIcon, FileTextIcon, RefreshIcon } from '../icons'
+import { CloseIcon, FileTextIcon, RefreshIcon, WhatsappIcon } from '../icons'
 import type { AuthSession, AuthCompany } from '../../lib/auth'
 
 interface NfceHistoryModalProps {
@@ -47,6 +48,7 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
   const [retryingId, setRetryingId] = useState<string | null>(null)
   const [retryNotice, setRetryNotice] = useState<Record<string, string>>({})
   const [printingId, setPrintingId] = useState<string | null>(null)
+  const [whatsappItem, setWhatsappItem] = useState<NfceHistoryItem | null>(null)
 
   function load() {
     setLoading(true)
@@ -207,6 +209,16 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
                       </button>
                     )}
 
+                    {item.status === 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setWhatsappItem(item)}
+                        className="mt-2 ml-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11.5px] font-bold text-[var(--green-600)]"
+                      >
+                        <WhatsappIcon className="h-3.5 w-3.5" /> Enviar no WhatsApp
+                      </button>
+                    )}
+
                     {item.status === 3 && isDuplicateNfceMessage(item.mensagem_sefaz) && (
                       <p className="mt-2 rounded-lg bg-[var(--amber-100)] px-2.5 py-2 text-[11.5px] leading-relaxed text-[var(--ink)]">
                         Esta nota já existe na SEFAZ. Não reenvie: confira em <em>Notas Fiscais &gt; Consultar na SEFAZ</em> no painel.
@@ -230,6 +242,19 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
           )}
         </div>
       </div>
+      {whatsappItem && (
+        <NfceWhatsappModal
+          token={token}
+          companyId={company.id}
+          nfeId={whatsappItem.id}
+          numero={whatsappItem.numero}
+          onClose={() => setWhatsappItem(null)}
+          onSent={(message) => {
+            setRetryNotice((current) => ({ ...current, [whatsappItem.id]: message }))
+            setWhatsappItem(null)
+          }}
+        />
+      )}
     </div>
   )
 }
