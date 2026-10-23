@@ -10,6 +10,13 @@ import { BarcodeScannerModal, type ScanFeedback } from '../components/pdv/Barcod
 import { loadFrequentProducts, recordFrequentProduct } from '../lib/frequentProducts'
 import { QuickSaleReceipt, QuickSalePrintPortal, type ReceiptData } from '../components/pdv/QuickSaleReceipt'
 import { NfceHistoryModal } from '../components/pdv/NfceHistoryModal'
+import {
+  EMPTY_PAYMENT_DETAILS,
+  PaymentDetailsFields,
+  isElectronicPayment,
+  paymentDetailsPayload,
+  type PaymentDetails,
+} from '../components/pdv/PaymentDetailsFields'
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
@@ -100,6 +107,10 @@ interface PaymentLine {
   amount: number
   // Dinheiro entregue pelo cliente (maior que o valor cobrado quando há troco).
   received?: number
+  // Bandeira, autorização e CNPJ da operadora digitados à mão (cartão sem TEF) ou ID do PIX.
+  card_brand?: string
+  payment_authorization?: string
+  card_acquirer_cnpj?: string
 }
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
@@ -206,6 +217,16 @@ export function QuickSalePage({
 
   const [payments, setPayments] = useState<PaymentLine[]>([])
   const [paymentMethodIndex, setPaymentMethodIndex] = useState(0)
+  const ACQUIRER_STORAGE_KEY = `c2_pdv_card_acquirer_${company.id}`
+  // Dados digitados da maquininha; a operadora fica lembrada entre as vendas.
+  const [paymentDetails, setPaymentDetails] = useState<PaymentDetails>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`c2_pdv_card_acquirer_${company.id}`) || 'null')
+      return { ...EMPTY_PAYMENT_DETAILS, acquirer: saved?.acquirer ?? '', otherCnpj: saved?.otherCnpj ?? '' }
+    } catch {
+      return EMPTY_PAYMENT_DETAILS
+    }
+  })
   const [paymentAmountInput, setPaymentAmountInput] = useState('')
   const paymentAmountRef = useRef<HTMLInputElement>(null)
 
@@ -707,7 +728,18 @@ export function QuickSalePage({
     const amount = parseAmountInput(paymentAmountInput)
     if (!amount || amount <= 0) return
     const method = PAYMENT_METHODS[paymentMethodIndex]
-    setPayments((prev) => [...prev, { form_payment: method.form_payment, name: method.name, amount }])
+    setPayments((prev) => [
+      ...prev,
+      { form_payment: method.form_payment, name: method.name, amount, ...paymentDetailsPayload(method.form_payment, paymentDetails) },
+    ])
+    if (isElectronicPayment(method.form_payment)) {
+      try {
+        localStorage.setItem(ACQUIRER_STORAGE_KEY, JSON.stringify({ acquirer: paymentDetails.acquirer, otherCnpj: paymentDetails.otherCnpj }))
+      } catch {
+        // sem armazenamento: só não lembra a operadora
+      }
+    }
+    setPaymentDetails((prev) => ({ ...prev, brand: '', authorization: '' }))
     const newRemaining = Math.max(0, remaining - amount)
     setPaymentAmountInput(newRemaining ? String(newRemaining.toFixed(2)).replace('.', ',') : '')
     // O restante já vem selecionado para o próximo pagamento: é só digitar por cima ou dar Enter.
@@ -931,6 +963,9 @@ export function QuickSalePage({
       change: index === lines.length - 1 ? change : 0,
       note: payment.name,
       status: 1,
+      card_brand: payment.card_brand,
+      payment_authorization: payment.payment_authorization,
+      card_acquirer_cnpj: payment.card_acquirer_cnpj,
     }))
 
     try {
@@ -1850,6 +1885,12 @@ export function QuickSalePage({
                 Adicionar
               </button>
             </div>
+            <PaymentDetailsFields
+              formPayment={PAYMENT_METHODS[paymentMethodIndex].form_payment}
+              value={paymentDetails}
+              onChange={setPaymentDetails}
+              onEnter={addPaymentLine}
+            />
             {payments.length > 0 && (
               <div className="mt-3 flex flex-col gap-1.5">
                 {payments.map((payment, index) => (
@@ -2485,6 +2526,12 @@ export function QuickSalePage({
             <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">
               ← → troca a forma · Enter adiciona · Delete remove última · F4 confirma
             </p>
+            <PaymentDetailsFields
+              formPayment={PAYMENT_METHODS[paymentMethodIndex].form_payment}
+              value={paymentDetails}
+              onChange={setPaymentDetails}
+              onEnter={addPaymentLine}
+            />
 
             {payments.length > 0 && (
               <div className="mt-3 flex flex-col gap-1">

@@ -17,6 +17,10 @@ export interface SalePlotPayload {
   change?: number
   note?: string
   status: number
+  // Dados da maquininha (sem TEF) que seguem na NFC-e.
+  card_brand?: string
+  payment_authorization?: string
+  card_acquirer_cnpj?: string
 }
 
 export interface CreateSalePayload {
