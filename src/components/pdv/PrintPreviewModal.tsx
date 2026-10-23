@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import type { PrintDocument, PrintLine } from '../../lib/printing'
-import { CloseIcon, PrinterIcon } from '../icons'
+import { CloseIcon, PrinterIcon, WhatsappIcon } from '../icons'
 
 interface PrintPreviewModalProps {
   open: boolean
   title: string
   documents: PrintDocument[]
   onClose: () => void
+  onWhatsapp?: () => void
 }
 
 const COLUMNS = 42
@@ -87,7 +88,7 @@ function Line({ line }: { line: PrintLine }) {
 
 // Mostra na tela o que sairia na impressora, para o PDV sem impressora
 // vinculada (ou terminal de teste). O mesmo documento que iria para a fila.
-export function PrintPreviewModal({ open, title, documents, onClose }: PrintPreviewModalProps) {
+export function PrintPreviewModal({ open, title, documents, onClose, onWhatsapp }: PrintPreviewModalProps) {
   const paperRef = useRef<HTMLDivElement>(null)
 
   if (!open) return null
@@ -173,7 +174,16 @@ export function PrintPreviewModal({ open, title, documents, onClose }: PrintPrev
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-[var(--border)] p-3">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] p-3">
+          {onWhatsapp && (
+            <button
+              type="button"
+              onClick={onWhatsapp}
+              className="flex items-center gap-1.5 rounded-xl border border-[var(--green-600)] px-4 py-2 text-[13px] font-bold text-[var(--green-600)] hover:bg-[var(--green-100)]"
+            >
+              <WhatsappIcon className="h-4 w-4" /> Enviar no WhatsApp
+            </button>
+          )}
           <button
             type="button"
             onClick={handlePrint}

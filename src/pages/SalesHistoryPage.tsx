@@ -11,10 +11,11 @@ import {
 import { fetchNfceDetails, fetchNfceQrCode } from '../lib/nfce'
 import { ApiError } from '../lib/api'
 import { formatCurrency } from '../lib/format'
-import { PrinterIcon, RefreshIcon, SearchIcon } from '../components/icons'
+import { PrinterIcon, RefreshIcon, SearchIcon, WhatsappIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 import type { PdvPrinters } from '../lib/terminal'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
+import { NfceWhatsappModal } from '../components/pdv/NfceWhatsappModal'
 
 interface SalesHistoryPageProps {
   session: AuthSession
@@ -41,7 +42,12 @@ function formatDateTime(iso?: string | null): string {
 export function SalesHistoryPage({ session, company, printers }: SalesHistoryPageProps) {
   const token = session.token.token
   const { receiptPrinterId, nfcePrinterId } = printers
-  const [preview, setPreview] = useState<{ title: string; documents: PrintDocument[] } | null>(null)
+  const [preview, setPreview] = useState<{
+    title: string
+    documents: PrintDocument[]
+    whatsapp?: { sale: QuickSaleItem; nfeId: string; numero: number | null }
+  } | null>(null)
+  const [whatsappTarget, setWhatsappTarget] = useState<{ sale: QuickSaleItem; nfeId: string; numero: number | null } | null>(null)
 
   const [sales, setSales] = useState<QuickSaleItem[]>([])
   const [search, setSearch] = useState('')
@@ -109,7 +115,11 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
           await createPrintJob(token, { company_id: company.id, printer_id: nfcePrinterId, title, payload: document })
           setNotice(sale.id, 'NFC-e enviada para a impressora.')
         } else {
-          setPreview({ title, documents: [document] })
+          setPreview({
+            title,
+            documents: [document],
+            whatsapp: { sale, nfeId: sale.nfce.id, numero: details.numero ?? sale.nfce.numero },
+          })
           setNotice(sale.id, '')
         }
       } else {
@@ -174,7 +184,29 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
         title={preview?.title ?? ''}
         documents={preview?.documents ?? []}
         onClose={() => setPreview(null)}
+        onWhatsapp={
+          preview?.whatsapp
+            ? () => {
+                setWhatsappTarget(preview.whatsapp ?? null)
+                setPreview(null)
+              }
+            : undefined
+        }
       />
+      {whatsappTarget && (
+        <NfceWhatsappModal
+          token={token}
+          companyId={company.id}
+          nfeId={whatsappTarget.nfeId}
+          numero={whatsappTarget.numero}
+          defaultName={whatsappTarget.sale.client_name ?? undefined}
+          onClose={() => setWhatsappTarget(null)}
+          onSent={(message) => {
+            setNotice(whatsappTarget.sale.id, message)
+            setWhatsappTarget(null)
+          }}
+        />
+      )}
       {error && <p className="mb-3 text-[12.5px] font-medium text-[var(--red-500)]">{error}</p>}
 
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2.5">
@@ -227,6 +259,16 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
                       className="flex items-center gap-1.5 rounded-lg bg-[var(--blue-500)] px-3 py-1.5 text-[12px] font-bold text-white hover:bg-[var(--blue-700)] disabled:opacity-60"
                     >
                       <PrinterIcon className="h-3.5 w-3.5" /> NFC-e
+                    </button>
+                  )}
+                  {sale.nfce?.status === 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setWhatsappTarget({ sale, nfeId: (sale.nfce as { id: string }).id, numero: sale.nfce?.numero ?? null })}
+                      disabled={Boolean(busyKey)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--green-600)] px-3 py-1.5 text-[12px] font-bold text-[var(--green-600)] hover:bg-[var(--green-100)] disabled:opacity-60"
+                    >
+                      <WhatsappIcon className="h-3.5 w-3.5" /> WhatsApp
                     </button>
                   )}
                   {sale.tokens.issued > 0 && (
