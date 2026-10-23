@@ -68,11 +68,15 @@ export function isDuplicateNfceError(err: unknown): boolean {
 
 const POLL_INTERVAL_MS = 2500
 const POLL_TIMEOUT_MS = 90_000
+const DUPLICATE_WAIT_MS = 30_000
 
 // Status da NF-e: 1 = em processamento, 2 = autorizada, 3 = erro/rejeitada.
 // Aguarda o retorno do envio (fila + SEFAZ) e devolve o resultado final.
 export async function waitNfceOutcome(token: string, nfeId: string): Promise<NfceOutcome> {
   const startedAt = Date.now()
+  // Duplicidade: o sistema consulta a SEFAZ sozinho e vincula o protocolo em alguns
+  // segundos - espera esse retorno antes de dizer ao operador que deu erro.
+  let duplicateSince: number | null = null
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
     let nfe: NfeStatusResponse
@@ -86,7 +90,10 @@ export async function waitNfceOutcome(token: string, nfeId: string): Promise<Nfc
     }
     if (Number(nfe.status) === 3) {
       const message = String(nfe.mensagem_sefaz || 'A NFC-e foi rejeitada.').trim()
-      return { authorized: false, pending: false, message, duplicate: isDuplicateNfceMessage(message) }
+      const duplicate = isDuplicateNfceMessage(message)
+      if (duplicate && duplicateSince === null) duplicateSince = Date.now()
+      if (duplicate && Date.now() - duplicateSince! < DUPLICATE_WAIT_MS) continue
+      return { authorized: false, pending: false, message, duplicate }
     }
   }
   return {

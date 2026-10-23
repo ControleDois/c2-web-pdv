@@ -2719,7 +2719,7 @@ export function QuickSalePage({
                 {nfceState.duplicate && (
                   <p className="mt-2 rounded-xl bg-[var(--amber-100)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[var(--ink)]">
                     Esta nota já existe na SEFAZ. <strong>Não tente de novo</strong> e não emita outra nota para esta venda: chame o
-                    responsável para conferir no painel em <em>Notas Fiscais &gt; Conferir na SEFAZ</em>.
+                    responsável para conferir no painel em <em>Notas Fiscais &gt; Consultar na SEFAZ</em>.
                   </p>
                 )}
                 <div className="mt-4 flex gap-2">
