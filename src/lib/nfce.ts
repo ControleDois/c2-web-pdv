@@ -49,6 +49,21 @@ export interface NfceOutcome {
   pending: boolean
   message: string
   number?: number
+  // Duplicidade na SEFAZ: a mesma nota já foi aceita antes — reenviar não resolve.
+  duplicate?: boolean
+}
+
+// "Duplicidade de NF-e" da mesma nota (a SEFAZ já tem a chave). A de "diferença na
+// chave" é outra coisa (o número é de outra nota) e o sistema resolve sozinho no reenvio.
+export function isDuplicateNfceMessage(message: string | null | undefined): boolean {
+  const text = String(message ?? '')
+  return /duplicidade/i.test(text) && !/diferen[çc]a na chave/i.test(text)
+}
+
+export function isDuplicateNfceError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false
+  const body = err.body as { codigo?: string } | undefined
+  return body?.codigo === 'nfe_duplicidade'
 }
 
 const POLL_INTERVAL_MS = 2500
@@ -70,11 +85,8 @@ export async function waitNfceOutcome(token: string, nfeId: string): Promise<Nfc
       return { authorized: true, pending: false, message: 'NFC-e autorizada.', number: nfe.numero }
     }
     if (Number(nfe.status) === 3) {
-      return {
-        authorized: false,
-        pending: false,
-        message: String(nfe.mensagem_sefaz || 'A NFC-e foi rejeitada.').trim(),
-      }
+      const message = String(nfe.mensagem_sefaz || 'A NFC-e foi rejeitada.').trim()
+      return { authorized: false, pending: false, message, duplicate: isDuplicateNfceMessage(message) }
     }
   }
   return {

@@ -4,6 +4,7 @@ import {
   fetchNfceHistory,
   fetchNfceQrCode,
   generateNfceFromSale,
+  isDuplicateNfceMessage,
   nfceErrorMessage,
   waitNfceOutcome,
   type NfceHistoryItem,
@@ -206,7 +207,13 @@ export function NfceHistoryModal({ open, session, company, printerId, onClose }:
                       </button>
                     )}
 
-                    {item.status === 3 && item.saleId && (
+                    {item.status === 3 && isDuplicateNfceMessage(item.mensagem_sefaz) && (
+                      <p className="mt-2 rounded-lg bg-[var(--amber-100)] px-2.5 py-2 text-[11.5px] leading-relaxed text-[var(--ink)]">
+                        Esta nota já existe na SEFAZ. Não reenvie: confira em <em>Notas Fiscais &gt; Conferir na SEFAZ</em> no painel.
+                      </p>
+                    )}
+
+                    {item.status === 3 && item.saleId && !isDuplicateNfceMessage(item.mensagem_sefaz) && (
                       <button
                         type="button"
                         onClick={() => void handleRetry(item)}

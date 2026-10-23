@@ -17,6 +17,7 @@ import {
   fetchNfceDetails,
   fetchNfceQrCode,
   generateNfceFromSale,
+  isDuplicateNfceError,
   generateNfseFromSale,
   nfceErrorMessage,
   nfseErrorMessage,
@@ -115,6 +116,8 @@ interface NfceState {
   status: 'sending' | 'authorized' | 'error'
   message: string
   pending?: boolean
+  // Duplicidade na SEFAZ: não reenviar nem emitir outra nota para a venda.
+  duplicate?: boolean
   number?: number
   details?: NfceDetails
   qrCodeUrl?: string | null
@@ -721,7 +724,7 @@ export function QuickSalePage({
       setNfceState({ status: 'sending', message: 'Aguardando a autorização da SEFAZ…' })
       const outcome = await waitNfceOutcome(session.token.token, nfeId)
       if (!outcome.authorized) {
-        setNfceState({ status: 'error', message: outcome.message, pending: outcome.pending })
+        setNfceState({ status: 'error', message: outcome.message, pending: outcome.pending, duplicate: outcome.duplicate })
         return
       }
       const [details, qrCode] = await Promise.all([
@@ -751,7 +754,7 @@ export function QuickSalePage({
       }
     } catch (err) {
       const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFC-e.' : nfceErrorMessage(err)
-      setNfceState({ status: 'error', message })
+      setNfceState({ status: 'error', message, duplicate: isDuplicateNfceError(err) })
       setNfceNotice(`NFC-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi emitida: ${message}`)
     }
   }
@@ -2713,6 +2716,12 @@ export function QuickSalePage({
                   {nfceState.pending ? '' : 'NFC-e não autorizada: '}
                   {nfceState.message}
                 </p>
+                {nfceState.duplicate && (
+                  <p className="mt-2 rounded-xl bg-[var(--amber-100)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[var(--ink)]">
+                    Esta nota já existe na SEFAZ. <strong>Não tente de novo</strong> e não emita outra nota para esta venda: chame o
+                    responsável para conferir no painel em <em>Notas Fiscais &gt; Conferir na SEFAZ</em>.
+                  </p>
+                )}
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
@@ -2721,7 +2730,7 @@ export function QuickSalePage({
                   >
                     Seguir sem NFC-e
                   </button>
-                  {!nfceState.pending && savedSale && (
+                  {!nfceState.pending && !nfceState.duplicate && savedSale && (
                     <button
                       type="button"
                       onClick={() => void emitNfce(savedSale)}
