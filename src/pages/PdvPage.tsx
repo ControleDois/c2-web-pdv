@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ProductSyncPage } from './ProductSyncPage'
 import { QuickSaleSettingsPage } from './QuickSaleSettingsPage'
 import { QuickSalePage } from './QuickSalePage'
@@ -12,9 +12,11 @@ import { TableDetail } from '../components/pdv/TableDetail'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
+import { useProductAutoSync } from '../hooks/useProductAutoSync'
 import { updateDeliveryOrderStatus, fetchIfoodCancellationReasons, cancelIfoodOrder } from '../lib/foodApi'
 import { isIfoodOrder, newLocalId } from '../lib/foodTypes'
 import { catalogLacksRole, countProducts } from '../lib/db'
+import { saleTokensEnabled } from '../lib/config'
 import {
   fetchCompanyTerminals,
   loadSelectedTerminalId,
@@ -48,8 +50,13 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   // Menu Caixa só aparece se a empresa tiver o controle de caixa ativo
   // (Configurações → Caixa no administrativo).
   const cashRegisterEnabled = Number(company.config?.central_box_active || 0) === 1
+  // Menu Fichas: venda rápida ligada e fichas ativas nos Ajustes do PDV.
+  const tokensEnabled = quickSaleEnabled && saleTokensEnabled(company.config)
 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('checking')
+  // Catálogo acabou de ser baixado na primeira abertura: a atualização automática não baixa de novo na hora.
+  const justSynced = useRef(false)
+  useProductAutoSync(session.token.token, company.id, syncStatus === 'ready', !justSynced.current)
   const [screen, setScreen] = useState<PdvScreen>(quickSaleOnlyMode ? 'quick-sale' : 'tables')
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('catalog')
   // Venda em andamento no celular: a barra de navegação sai para dar lugar ao carrinho.
@@ -116,6 +123,12 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         nfcePrinterId: company.config?.quick_sale_nfce_printer_id || null,
       }
 
+  // Fichas desligadas nos Ajustes com a tela de fichas aberta: volta para o início.
+  useEffect(() => {
+    if (!tokensEnabled && screen === 'tokens') setScreen(quickSaleOnlyMode ? 'quick-sale' : 'tables')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokensEnabled])
+
   // Se o ajuste "somente venda rápida" for ligado/desligado enquanto o PDV
   // já está aberto (ex: em outra aba), mantém a tela coerente com o modo.
   useEffect(() => {
@@ -150,11 +163,19 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     return <TerminalPickerPage terminals={terminals} onSelect={handleSelectTerminal} onSkip={handleSkipTerminal} />
   }
 
-  // Só força a sincronização quando nunca rodou antes (0 produtos salvos) -
-  // depois disso, atualizar o cardápio é uma ação em Configurações, não uma
-  // trava toda vez que o PDV abre.
+  // Só força a sincronização quando nunca rodou antes (0 produtos salvos) - já começa a baixar
+  // sozinha e, ao terminar, entra no PDV. Depois disso o catálogo se atualiza em segundo plano.
   if (syncStatus === 'needs-sync') {
-    return <ProductSyncPage session={session} company={company} onReady={() => setSyncStatus('ready')} />
+    return (
+      <ProductSyncPage
+        session={session}
+        company={company}
+        onReady={() => {
+          justSynced.current = true
+          setSyncStatus('ready')
+        }}
+      />
+    )
   }
 
   const selectedTable = tables.find((table) => table.id === selectedId) ?? null
@@ -284,7 +305,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     showQuickSale: quickSaleEnabled,
     showNfce: nfceEnabled,
     showCashRegister: cashRegisterEnabled,
-    showTokens: quickSaleEnabled,
+    showTokens: tokensEnabled,
     showSalesHistory: quickSaleEnabled,
   }
 
@@ -297,7 +318,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         showQuickSale={quickSaleEnabled}
         showNfce={nfceEnabled}
         showCashRegister={cashRegisterEnabled}
-        showTokens={quickSaleEnabled}
+        showTokens={tokensEnabled}
         showSalesHistory={quickSaleEnabled}
       />
       <div className="min-h-0 min-w-0 flex-1">

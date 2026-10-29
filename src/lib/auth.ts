@@ -35,6 +35,7 @@ export interface ConfigRecord {
   scale_code_digits?: number
   scale_value_digits?: number
   scale_value_type?: 'price' | 'weight'
+  sale_tokens_enabled?: boolean
   nfe_module_enabled?: boolean
   sale_category_default_id?: string | null
   sale_bank_account_default_id?: string | null

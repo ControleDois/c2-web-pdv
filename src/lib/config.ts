@@ -18,8 +18,14 @@ export interface QuickSaleConfigPayload {
   scale_code_digits?: number
   scale_value_digits?: number
   scale_value_type?: 'price' | 'weight'
+  sale_tokens_enabled?: boolean
 }
 
 export function updateConfig(token: string, companyId: string, configId: string, payload: QuickSaleConfigPayload) {
   return apiPut<ConfigRecord>(`/config/${configId}`, { companyId, ...payload }, token)
+}
+
+// Fichas ligadas por padrão: empresa sem o ajuste salvo (antes da opção existir) continua como estava.
+export function saleTokensEnabled(config?: ConfigRecord | null) {
+  return config?.sale_tokens_enabled !== false
 }

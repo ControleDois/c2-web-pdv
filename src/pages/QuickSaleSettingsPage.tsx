@@ -55,6 +55,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [scaleValueDigits, setScaleValueDigits] = useState(Number(config?.scale_value_digits ?? 5))
   const [scaleValueType, setScaleValueType] = useState<'price' | 'weight'>(config?.scale_value_type ?? 'price')
   const [scaleSample, setScaleSample] = useState('')
+  const [tokensEnabled, setTokensEnabled] = useState(config?.sale_tokens_enabled !== false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -105,6 +106,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         scale_code_digits: scaleCodeDigits,
         scale_value_digits: scaleValueDigits,
         scale_value_type: scaleValueType,
+        sale_tokens_enabled: tokensEnabled,
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -155,6 +157,18 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
               </p>
             </div>
             <Toggle checked={onlyMode} onChange={setOnlyMode} />
+          </div>
+        )}
+
+        {enabled && (
+          <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div>
+              <p className="text-[13.5px] font-bold text-[var(--ink)]">Fichas</p>
+              <p className="text-[11.5px] text-[var(--ink-soft)]">
+                Mostra o menu Fichas e pergunta se imprime as fichas ao finalizar a venda (produtos marcados para gerar ficha)
+              </p>
+            </div>
+            <Toggle checked={tokensEnabled} onChange={setTokensEnabled} />
           </div>
         )}
 

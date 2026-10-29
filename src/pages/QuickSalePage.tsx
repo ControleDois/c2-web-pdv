@@ -43,6 +43,7 @@ import { buildNfceDocument, buildQuickSaleDocument, createPrintJob, type PrintDo
 import type { PdvPrinters } from '../lib/terminal'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { issueSaleTokens } from '../lib/saleTokens'
+import { saleTokensEnabled } from '../lib/config'
 import { ApiError } from '../lib/api'
 import {
   ChevronLeftIcon,
@@ -100,6 +101,9 @@ function isWeighed(item: CartItem): boolean {
 }
 
 let cartUidSeed = 0
+
+// Quantos produtos a busca mostra embaixo do campo, sem precisar abrir a consulta (F2).
+const SCAN_LIST_SIZE = 5
 
 interface PaymentLine {
   form_payment: number
@@ -186,6 +190,8 @@ export function QuickSalePage({
   const scanInputRef = useRef<HTMLInputElement>(null)
   // Celular: resultados da busca em toque, mais usados, câmera, menu e cobrança em uma etapa só.
   const [scanResults, setScanResults] = useState<LocalProduct[]>([])
+  // Item marcado na lista da busca (setas ↑/↓ escolhem, Enter adiciona) - no computador.
+  const [scanHighlight, setScanHighlight] = useState(0)
   const [frequent, setFrequent] = useState<LocalProduct[]>([])
   const [cameraOpen, setCameraOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -309,6 +315,7 @@ export function QuickSalePage({
     setScanPreview(null)
     setScanError(null)
     setScanResults([])
+    setScanHighlight(0)
     setPendingProduct(null)
     setQuantityInput('1')
     setPriceInput('')
@@ -376,6 +383,7 @@ export function QuickSalePage({
     setScanError(null)
     if (parseScaleLabel(value, scaleConfig)) {
       setScanPreview(null)
+      setScanResults([])
       return
     }
     if (!value.trim()) {
@@ -387,6 +395,16 @@ export function QuickSalePage({
     if (seq !== scanSeq.current) return
     setScanPreview(results[0] ?? null)
     setScanResults(results.slice(0, 12))
+    setScanHighlight(0)
+  }
+
+  // Setas na lista da busca: o item marcado vira o que o Enter adiciona.
+  function moveScanHighlight(delta: number) {
+    const visible = scanResults.slice(0, SCAN_LIST_SIZE)
+    if (visible.length === 0) return
+    const next = Math.min(Math.max(scanHighlight + delta, 0), visible.length - 1)
+    setScanHighlight(next)
+    setScanPreview(visible[next])
   }
 
   // Celular: toque num resultado ou num item mais usado.
@@ -578,6 +596,11 @@ export function QuickSalePage({
     if (event.key === 'F6') {
       event.preventDefault()
       openQuickProduct()
+      return
+    }
+    if (step === 'scan' && scanQuery !== '' && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      event.preventDefault()
+      moveScanHighlight(event.key === 'ArrowDown' ? 1 : -1)
       return
     }
     if (step !== 'scan' || scanQuery !== '') return
@@ -1056,6 +1079,7 @@ export function QuickSalePage({
   // Antes de emitir, confere se a venda gera fichas e pergunta ao operador se quer imprimir:
   // nem sempre a ficha é necessária. Dizendo "não", nada é emitido e dá para emitir depois em Histórico.
   async function checkTokensFor(saleId: string) {
+    if (!saleTokensEnabled(config)) return
     try {
       const result = await issueSaleTokens(session.token.token, company.id, saleId, receiptPrinterId, true)
       if (result.reason === 'confirm' && result.tokens > 0) setTokenAsk({ saleId, count: result.tokens })
@@ -2036,20 +2060,44 @@ export function QuickSalePage({
           }`}
         />
 
-        {step === 'scan' && scanPreview && (
-          <div className="mt-2.5 flex items-center gap-3 rounded-xl bg-[var(--green-100)] px-3.5 py-2.5">
-            <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-[var(--surface)] text-[var(--green-600)]">
-              <BoxIcon className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13.5px] font-bold text-[var(--ink)]">{scanPreview.name}</p>
-              <p className="text-[11.5px] text-[var(--ink-soft)]">
-                {scanPreview.code ? `Cód. ${scanPreview.code}` : scanPreview.barcode || ''}
+        {step === 'scan' && scanResults.length > 0 && (
+          <div className="mt-2.5 flex flex-col gap-1">
+            {scanResults.slice(0, SCAN_LIST_SIZE).map((product, index) => {
+              const marked = index === scanHighlight
+              return (
+                <button
+                  key={product.id}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => pickProduct(product)}
+                  className={`flex items-center gap-3 rounded-xl px-3.5 py-2 text-left ${
+                    marked ? 'bg-[var(--green-100)]' : 'hover:bg-[var(--page)]'
+                  }`}
+                >
+                  <span
+                    className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg ${
+                      marked ? 'bg-[var(--surface)] text-[var(--green-600)]' : 'bg-[var(--page)] text-[var(--ink-soft)]'
+                    }`}
+                  >
+                    <BoxIcon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13.5px] font-bold text-[var(--ink)]">{product.name}</p>
+                    <p className="text-[11.5px] text-[var(--ink-soft)]">
+                      {product.code ? `Cód. ${product.code}` : product.barcode || ''}
+                    </p>
+                  </div>
+                  <p className={`flex-none text-[15px] font-bold ${marked ? 'text-[var(--green-600)]' : 'text-[var(--ink)]'}`}>
+                    {formatCurrency(Number(product.sale_value || 0))}
+                  </p>
+                </button>
+              )
+            })}
+            {scanResults.length > 1 && (
+              <p className="px-1 text-[11.5px] text-[var(--muted)]">
+                <span className="font-semibold">↑ ↓</span> escolhe · <span className="font-semibold">Enter</span> adiciona
               </p>
-            </div>
-            <p className="flex-none text-[16px] font-bold text-[var(--green-600)]">
-              {formatCurrency(Number(scanPreview.sale_value || 0))}
-            </p>
+            )}
           </div>
         )}
         {step === 'scan' && scanError && (

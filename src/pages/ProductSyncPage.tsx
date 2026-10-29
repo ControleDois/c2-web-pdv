@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { fetchProducts } from '../lib/products'
-import { clearProducts, batchInsertProducts, countProducts } from '../lib/db'
+import { useEffect, useRef, useState } from 'react'
+import { countProducts } from '../lib/db'
+import { downloadCatalog } from '../lib/productSync'
 import { ApiError } from '../lib/api'
 import { RefreshIcon, CheckCircleIcon, ChevronLeftIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
@@ -15,12 +15,11 @@ interface ProductSyncPageProps {
   onBack?: () => void
 }
 
-const PAGE_SIZE = 100
-
 // Porte do painel "Abertura de caixa" do PDV Angular (só a parte de
 // produtos — o PDV Food não usa cliente/categoria) — baixa o catálogo
 // inteiro pro IndexedDB antes de liberar a venda, pra busca de produto
-// funcionar offline durante o atendimento.
+// funcionar offline durante o atendimento. Na primeira abertura começa
+// sozinho e, ao terminar, já entra no PDV.
 export function ProductSyncPage({ session, company, onReady, embedded, onBack }: ProductSyncPageProps) {
   const [syncing, setSyncing] = useState(false)
   const [page, setPage] = useState(1)
@@ -35,6 +34,15 @@ export function ProductSyncPage({ session, company, onReady, embedded, onBack }:
     countProducts().then(setCachedCount)
   }, [])
 
+  // Fora dos Ajustes (primeira abertura) não espera clique: começa a baixar assim que a tela abre.
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (embedded || autoStarted.current) return
+    autoStarted.current = true
+    void handleSync()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded])
+
   async function handleSync() {
     setSyncing(true)
     setError(null)
@@ -42,45 +50,15 @@ export function ProductSyncPage({ session, company, onReady, embedded, onBack }:
     setDownloaded(0)
 
     try {
-      await clearProducts()
-
-      let currentPage = 1
-      let lastPage = 1
-      let downloadedSoFar = 0
-
-      do {
-        setPage(currentPage)
-        const res = await fetchProducts(session.token.token, company.id, {
-          page: currentPage,
-          limit: PAGE_SIZE,
-        })
-        const items = res.data || []
-        lastPage = res.meta?.last_page ?? 1
-        setTotalPages(lastPage)
-        setTotal(res.meta?.total ?? items.length)
-
-        if (items.length > 0) {
-          await batchInsertProducts(
-            items.map((product) => ({
-              id: product.id,
-              code: product.internal_code ?? product.code,
-              barcode: product.barcode,
-              name: product.name,
-              sale_value: product.sale_value,
-              unit: product.unit,
-              ask_name: product.ask_name,
-              role: product.role,
-            }))
-          )
-          downloadedSoFar += items.length
-          setDownloaded(downloadedSoFar)
-        }
-
-        currentPage += 1
-      } while (currentPage <= lastPage)
-
+      const count = await downloadCatalog(session.token.token, company.id, (progress) => {
+        setPage(progress.page)
+        setTotalPages(progress.totalPages)
+        setDownloaded(progress.downloaded)
+        setTotal(progress.total)
+      })
       setCompleted(true)
-      setCachedCount(downloadedSoFar)
+      setCachedCount(count)
+      if (!embedded) onReady()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Não foi possível baixar os produtos.')
     } finally {
@@ -92,10 +70,15 @@ export function ProductSyncPage({ session, company, onReady, embedded, onBack }:
 
   const card = (
     <div className={embedded ? 'w-full max-w-[480px]' : 'w-full max-w-[420px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6'}>
-      {!embedded && <h1 className="text-[16px] font-bold text-[var(--ink)]">Sincronização local</h1>}
+      {!embedded && (
+        <h1 className="text-[16px] font-bold text-[var(--ink)]">
+          {error ? 'Não foi possível atualizar' : 'Atualizando lista de produtos…'}
+        </h1>
+      )}
       <p className="mt-1 text-[13px] text-[var(--ink-soft)]">
-        Baixa o cardápio pro dispositivo antes de começar a vender — a comanda funciona offline
-        depois disso.
+        {embedded
+          ? 'Os produtos se atualizam sozinhos a cada 10 minutos. Use o botão para atualizar agora.'
+          : 'Baixando os produtos pro dispositivo — a venda funciona offline depois disso. Ao terminar, o PDV abre sozinho.'}
       </p>
 
       {cachedCount !== null && cachedCount > 0 && !syncing && !completed && (

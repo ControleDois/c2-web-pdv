@@ -53,6 +53,21 @@ export async function batchInsertProducts(products: LocalProduct[], batchSize = 
   }
 }
 
+// Troca o catálogo inteiro numa transação só: a busca do caixa nunca vê a base vazia no meio da
+// atualização, e o que foi excluído no servidor some daqui.
+export async function replaceProducts(products: LocalProduct[]): Promise<void> {
+  const db = await getDb()
+  const tx = db.transaction('products', 'readwrite')
+  const store = tx.objectStore('products')
+  const keep = new Set(products.map((product) => product.id))
+  const existing = (await store.getAllKeys()) as string[]
+  await Promise.all([
+    ...existing.filter((id) => !keep.has(id)).map((id) => store.delete(id)),
+    ...products.map((product) => store.put(product)),
+  ])
+  await tx.done
+}
+
 export async function countProducts(): Promise<number> {
   const db = await getDb()
   return db.transaction('products').objectStore('products').count()
