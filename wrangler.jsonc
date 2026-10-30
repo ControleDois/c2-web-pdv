@@ -1,0 +1,11 @@
+// Hospedagem no Cloudflare (Workers com arquivos estáticos): o build gera o `dist` e o
+// `npx wrangler deploy` publica. Sem esta configuração o Cloudflare tenta se configurar
+// sozinho a cada build. O PDV não usa caminhos na URL; qualquer endereço cai no index.html.
+{
+  "name": "controledois-pdv",
+  "compatibility_date": "2026-10-23",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
