@@ -23,6 +23,15 @@ export function sendNfceWhatsapp(
   return apiPost<{ message: string }>(`/nfe/${nfeId}/send-whatsapp`, payload, token)
 }
 
+// Mesmo envio da NFC-e, com o DANFSe da NFS-e autorizada.
+export function sendNfseWhatsapp(
+  token: string,
+  nfseId: string,
+  payload: { whatsappId: string; phone: string; name?: string }
+) {
+  return apiPost<{ message: string }>(`/nfse/${nfseId}/send-whatsapp`, payload, token)
+}
+
 export function formatPhone(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 11)
   if (digits.length <= 2) return digits

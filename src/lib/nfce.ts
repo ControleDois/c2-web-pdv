@@ -107,6 +107,11 @@ export function fetchNfceDanfe(token: string, nfeId: string): Promise<Blob> {
   return apiFetchBlob(`/nfe/${nfeId}/file/danfe`, undefined, token)
 }
 
+// DANFSe gerado pelo backend (o caminho_pdf salvo na nota pode não apontar para um PDF de verdade).
+export function fetchNfseDanfse(token: string, nfseId: string): Promise<Blob> {
+  return apiFetchBlob(`/nfse/${nfseId}/file/danfse`, undefined, token)
+}
+
 export interface NfceHistoryItem {
   id: string
   code?: number
@@ -309,7 +314,7 @@ export interface NfseOutcome {
   pending: boolean
   message: string
   number?: string | null
-  pdfUrl?: string | null
+  nfseId?: string
 }
 
 const NFSE_POLL_TIMEOUT_MS = 120_000
@@ -330,7 +335,7 @@ export async function waitNfseOutcome(token: string, nfseId: string): Promise<Nf
         pending: false,
         message: 'NFS-e autorizada.',
         number: nfse.numero_nfse,
-        pdfUrl: nfse.caminho_pdf,
+        nfseId,
       }
     }
     if (Number(nfse.status) === 3) {

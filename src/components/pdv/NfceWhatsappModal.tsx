@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api'
 import { searchPeople, type PersonRecord } from '../../lib/people'
-import { fetchCompanyWhatsapps, formatPhone, sendNfceWhatsapp, type CompanyWhatsapp } from '../../lib/whatsapp'
+import { fetchCompanyWhatsapps, formatPhone, sendNfceWhatsapp, sendNfseWhatsapp, type CompanyWhatsapp } from '../../lib/whatsapp'
 import { formatDocument } from '../../lib/formatDocument'
 import { TextField } from '../form/TextField'
 import { Select } from '../form/Select'
@@ -11,7 +11,9 @@ interface NfceWhatsappModalProps {
   token: string
   companyId: string
   nfeId: string
-  numero?: number | null
+  // 'nfse': nfeId é o id da NFS-e e vai o DANFSe.
+  kind?: 'nfce' | 'nfse'
+  numero?: number | string | null
   defaultName?: string
   defaultPhone?: string
   onClose: () => void
@@ -25,7 +27,7 @@ const personPhone = (person: PersonRecord) => String(person.phone ?? '').replace
 // Manda o PDF da NFC-e autorizada para o WhatsApp do cliente: escolhe um cliente cadastrado
 // (o número vem do cadastro) OU digita o número direto. Lembra qual WhatsApp da loja foi usado
 // por último, então o normal é só digitar o número e dar Enter.
-export function NfceWhatsappModal({ token, companyId, nfeId, numero, defaultName, defaultPhone, onClose, onSent }: NfceWhatsappModalProps) {
+export function NfceWhatsappModal({ token, companyId, nfeId, kind = 'nfce', numero, defaultName, defaultPhone, onClose, onSent }: NfceWhatsappModalProps) {
   const [whatsapps, setWhatsapps] = useState<CompanyWhatsapp[]>([])
   const [whatsappId, setWhatsappId] = useState('')
   const [clientName, setClientName] = useState(defaultName ?? '')
@@ -37,6 +39,7 @@ export function NfceWhatsappModal({ token, companyId, nfeId, numero, defaultName
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const searchSeq = useRef(0)
+  const label = kind === 'nfse' ? 'NFS-e' : 'NFC-e'
 
   useEffect(() => {
     let cancelled = false
@@ -106,7 +109,8 @@ export function NfceWhatsappModal({ token, companyId, nfeId, numero, defaultName
     setSending(true)
     setError(null)
     try {
-      const result = await sendNfceWhatsapp(token, nfeId, { whatsappId, phone, name: clientName || undefined })
+      const send = kind === 'nfse' ? sendNfseWhatsapp : sendNfceWhatsapp
+      const result = await send(token, nfeId, { whatsappId, phone, name: clientName || undefined })
       try {
         localStorage.setItem(`${STORAGE_KEY}_${companyId}`, whatsappId)
       } catch {
@@ -114,7 +118,7 @@ export function NfceWhatsappModal({ token, companyId, nfeId, numero, defaultName
       }
       onSent(result.message)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Não foi possível enviar a NFC-e.')
+      setError(err instanceof ApiError ? err.message : `Não foi possível enviar a ${label}.`)
     } finally {
       setSending(false)
     }
@@ -142,7 +146,7 @@ export function NfceWhatsappModal({ token, companyId, nfeId, numero, defaultName
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="flex items-center gap-2 text-[15px] font-bold text-[var(--ink)]">
-              <WhatsappIcon className="h-4 w-4 text-[var(--green-600)]" /> Enviar NFC-e{numero ? ` nº ${numero}` : ''}
+              <WhatsappIcon className="h-4 w-4 text-[var(--green-600)]" /> Enviar {label}{numero ? ` nº ${numero}` : ''}
             </p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--ink-soft)]">
               O cliente recebe o PDF da nota no WhatsApp. Escolha um cliente cadastrado ou digite o número direto.

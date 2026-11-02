@@ -29,6 +29,7 @@ import {
   generateNfceFromSale,
   isDuplicateNfceError,
   generateNfseFromSale,
+  fetchNfseDanfse,
   nfceErrorMessage,
   nfseErrorMessage,
   nfseTomadorPending,
@@ -69,6 +70,7 @@ import {
   MoreVerticalIcon,
   CloseIcon,
   WhatsappIcon,
+  DownloadIcon,
 } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
@@ -250,6 +252,11 @@ export function QuickSalePage({
   const [nfceSentNote, setNfceSentNote] = useState<string | null>(null)
   const [nfseState, setNfseState] = useState<NfseState | null>(null)
   const [nfseTomador, setNfseTomador] = useState<NfseTomadorPending | null>(null)
+  // DANFSe da nota recém-autorizada (blob local, para mostrar, imprimir e baixar).
+  const [nfseDanfse, setNfseDanfse] = useState<{ loading: boolean; url?: string; error?: string } | null>(null)
+  const [nfseWhatsappOpen, setNfseWhatsappOpen] = useState(false)
+  const [nfseSentNote, setNfseSentNote] = useState<string | null>(null)
+  const nfseFrameRef = useRef<HTMLIFrameElement>(null)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
   const { receiptPrinterId, nfcePrinterId } = printers
@@ -843,6 +850,7 @@ export function QuickSalePage({
         return
       }
       setNfseState({ status: 'authorized', message: outcome.message, outcome })
+      if (outcome.nfseId) void loadNfseDanfse(outcome.nfseId)
     } catch (err) {
       // Cliente sem CPF/CNPJ, e-mail ou endereço: pede os dados antes de mandar à prefeitura.
       const pending = nfseTomadorPending(err)
@@ -858,7 +866,30 @@ export function QuickSalePage({
     }
   }
 
+  async function loadNfseDanfse(nfseId: string) {
+    setNfseSentNote(null)
+    setNfseDanfse({ loading: true })
+    try {
+      const blob = await fetchNfseDanfse(session.token.token, nfseId)
+      setNfseDanfse({ loading: false, url: URL.createObjectURL(blob) })
+    } catch (err) {
+      setNfseDanfse({ loading: false, error: err instanceof ApiError ? err.message : 'Não foi possível gerar o DANFSe.' })
+    }
+  }
+
+  function downloadNfseDanfse() {
+    if (!nfseDanfse?.url) return
+    const link = document.createElement('a')
+    link.href = nfseDanfse.url
+    link.download = `nfse-${nfseState?.outcome?.number || savedSale?.code || 'danfse'}.pdf`
+    link.click()
+  }
+
   function continueAfterNfse(saved: { id: string; code?: number }) {
+    if (nfseDanfse?.url) URL.revokeObjectURL(nfseDanfse.url)
+    setNfseDanfse(null)
+    setNfseWhatsappOpen(false)
+    setNfseSentNote(null)
     setNfseState(null)
     if (nfceMode === 'ask') {
       setModal('ask-nfce')
@@ -2726,11 +2757,13 @@ export function QuickSalePage({
       {modal === 'nfse' && nfseState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
-            className="flex w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl"
+            className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-xl ${
+              nfseState.status === 'authorized' ? 'max-w-2xl' : 'max-w-sm'
+            }`}
             tabIndex={-1}
             ref={(el) => el?.focus()}
             onKeyDown={(e) => {
-              if (nfseState.status === 'sending') return
+              if (nfseState.status === 'sending' || nfseWhatsappOpen) return
               if (e.key === 'Escape' || e.key === 'Enter') {
                 e.preventDefault()
                 if (savedSale) continueAfterNfse(savedSale)
@@ -2780,10 +2813,36 @@ export function QuickSalePage({
 
             {nfseState.status === 'authorized' && (
               <>
-                <p className="px-5 py-8 text-center text-[13.5px] font-semibold text-[var(--green-600)]">
+                <p className="px-5 pt-3 text-[13px] font-semibold text-[var(--green-600)]">
                   NFS-e autorizada{nfseState.outcome?.number ? ` (nº ${nfseState.outcome.number})` : ''}.
                 </p>
-                <div className="flex gap-2 border-t border-[var(--border)] p-3.5">
+                <div className="min-h-0 flex-1 p-3">
+                  {nfseDanfse?.loading && (
+                    <div className="flex h-[60vh] flex-col items-center justify-center gap-3 rounded-xl bg-[var(--page)]">
+                      <div className="h-7 w-7 animate-spin rounded-full border-[3px] border-[var(--border)] border-t-[var(--blue-500)]" />
+                      <p className="text-[12.5px] text-[var(--muted)]">Gerando o DANFSe…</p>
+                    </div>
+                  )}
+                  {nfseDanfse?.error && (
+                    <p className="rounded-xl bg-[var(--amber-100)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--amber-500)]">
+                      A nota foi autorizada, mas o DANFSe não abriu: {nfseDanfse.error}
+                    </p>
+                  )}
+                  {nfseDanfse?.url && (
+                    <iframe
+                      ref={nfseFrameRef}
+                      src={nfseDanfse.url}
+                      title="DANFSe"
+                      className="h-[60vh] w-full rounded-xl border border-[var(--border)] bg-white"
+                    />
+                  )}
+                  {nfseSentNote && (
+                    <p className="mt-2 rounded-xl bg-[var(--green-100)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--green-600)]">
+                      {nfseSentNote}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 border-t border-[var(--border)] p-3.5">
                   <button
                     type="button"
                     onClick={() => savedSale && continueAfterNfse(savedSale)}
@@ -2791,15 +2850,32 @@ export function QuickSalePage({
                   >
                     Continuar
                   </button>
-                  {nfseState.outcome?.pdfUrl && (
-                    <a
-                      href={nfseState.outcome.pdfUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-1 rounded-xl bg-[var(--blue-500)] py-2.5 text-center text-[13px] font-bold text-white"
+                  {nfseDanfse?.url && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => nfseFrameRef.current?.contentWindow?.print()}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink)]"
+                      >
+                        <PrinterIcon className="h-4 w-4" /> Imprimir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={downloadNfseDanfse}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink)]"
+                      >
+                        <DownloadIcon className="h-4 w-4" /> Baixar
+                      </button>
+                    </>
+                  )}
+                  {nfseState.outcome?.nfseId && (
+                    <button
+                      type="button"
+                      onClick={() => setNfseWhatsappOpen(true)}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--green-600)] py-2.5 text-[13px] font-bold text-white"
                     >
-                      Abrir PDF da nota
-                    </a>
+                      <WhatsappIcon className="h-4 w-4" /> WhatsApp
+                    </button>
                   )}
                 </div>
               </>
@@ -2938,6 +3014,23 @@ export function QuickSalePage({
           onSent={(message) => {
             setNfceWhatsappOpen(false)
             setNfceSentNote(message)
+          }}
+        />
+      )}
+
+      {nfseWhatsappOpen && nfseState?.outcome?.nfseId && (
+        <NfceWhatsappModal
+          token={session.token.token}
+          companyId={company.id}
+          nfeId={nfseState.outcome.nfseId}
+          kind="nfse"
+          numero={nfseState.outcome.number}
+          defaultName={client?.name}
+          defaultPhone={client?.phone ? String(client.phone) : undefined}
+          onClose={() => setNfseWhatsappOpen(false)}
+          onSent={(message) => {
+            setNfseWhatsappOpen(false)
+            setNfseSentNote(message)
           }}
         />
       )}
