@@ -262,8 +262,42 @@ export interface NfseResult {
   nfse?: NfseSummary
 }
 
-export function generateNfseFromSale(token: string, saleId: string) {
-  return apiPost<NfseResult>(`/nfse/generate-from-sale/${saleId}`, {}, token)
+// Tomador da NFS-e: a prefeitura exige documento, e-mail e endereço completo.
+export interface NfseTomador {
+  people_id: string | null
+  name: string
+  document: string
+  email: string
+  phone: string
+  address: {
+    zip_code: string
+    address: string
+    number: string
+    complement: string
+    district: string
+    city: string
+    state: string
+    code_ibge: string
+  }
+}
+
+export interface NfseTomadorPending {
+  missing: string[]
+  tomador: NfseTomador
+}
+
+// Sem `tomador` o backend usa o cliente da venda (ou quem tem o CPF da nota);
+// com ele, completa/cria o cadastro antes de gerar a nota.
+export function generateNfseFromSale(token: string, saleId: string, tomador?: NfseTomador) {
+  return apiPost<NfseResult>(`/nfse/generate-from-sale/${saleId}`, tomador ? { tomador } : {}, token)
+}
+
+// O backend devolve 422 com code 'tomador_incompleto' antes de enviar qualquer coisa à prefeitura.
+export function nfseTomadorPending(err: unknown): NfseTomadorPending | null {
+  if (!(err instanceof ApiError) || err.status !== 422) return null
+  const body = err.body as { code?: string; missing?: string[]; tomador?: NfseTomador } | undefined
+  if (body?.code !== 'tomador_incompleto' || !body.tomador) return null
+  return { missing: body.missing ?? [], tomador: body.tomador }
 }
 
 export function nfseErrorMessage(err: unknown): string {

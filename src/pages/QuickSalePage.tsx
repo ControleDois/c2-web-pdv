@@ -21,6 +21,7 @@ import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
 import { ProductKindTag } from '../components/pdv/ProductKindTag'
+import { NfseTomadorModal } from '../components/pdv/NfseTomadorModal'
 import { NfceWhatsappModal } from '../components/pdv/NfceWhatsappModal'
 import {
   fetchNfceDetails,
@@ -30,10 +31,13 @@ import {
   generateNfseFromSale,
   nfceErrorMessage,
   nfseErrorMessage,
+  nfseTomadorPending,
   waitNfceOutcome,
   waitNfseOutcome,
   type NfceDetails,
   type NfseOutcome,
+  type NfseTomador,
+  type NfseTomadorPending,
 } from '../lib/nfce'
 import { NfceReceipt, NfcePrintPortal } from '../components/pdv/NfceReceipt'
 import { formatCurrency, formatDateTime, formatQuantity, round2 } from '../lib/format'
@@ -120,7 +124,7 @@ interface PaymentLine {
 
 type Phase = 'checking' | 'blocked' | 'idle' | 'active'
 type Step = 'scan' | 'name' | 'quantity' | 'price'
-type Modal = null | 'product' | 'client' | 'cpf' | 'quick-product' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-nfse' | 'nfse' | 'ask-preview' | 'receipt'
+type Modal = null | 'product' | 'client' | 'cpf' | 'quick-product' | 'payment' | 'remove-confirm' | 'ask-nfce' | 'nfce' | 'ask-nfse' | 'nfse' | 'nfse-tomador' | 'ask-preview' | 'receipt'
 
 interface NfseState {
   status: 'sending' | 'authorized' | 'error'
@@ -245,6 +249,7 @@ export function QuickSalePage({
   const [nfceWhatsappOpen, setNfceWhatsappOpen] = useState(false)
   const [nfceSentNote, setNfceSentNote] = useState<string | null>(null)
   const [nfseState, setNfseState] = useState<NfseState | null>(null)
+  const [nfseTomador, setNfseTomador] = useState<NfseTomadorPending | null>(null)
   // Impressoras do cadastro (servidor de impressão): quando escolhidas, imprime
   // direto nelas; sem impressora configurada, mostra o preview como sempre.
   const { receiptPrinterId, nfcePrinterId } = printers
@@ -823,11 +828,12 @@ export function QuickSalePage({
 
   // NFS-e: só os itens de serviço da venda entram na nota. Depois do resultado (ou de seguir sem a
   // nota), a venda segue para a NFC-e (se configurada) e para o comprovante.
-  async function emitNfse(sale: { id: string; code?: number }) {
+  async function emitNfse(sale: { id: string; code?: number }, tomador?: NfseTomador) {
     setModal('nfse')
+    setNfseTomador(null)
     setNfseState({ status: 'sending', message: 'Enviando NFS-e…' })
     try {
-      const result = await generateNfseFromSale(session.token.token, sale.id)
+      const result = await generateNfseFromSale(session.token.token, sale.id, tomador)
       const nfseId = result.nfse?.id
       if (!nfseId) throw new Error('sem-id')
       setNfseState({ status: 'sending', message: 'Aguardando a autorização da prefeitura…' })
@@ -838,6 +844,14 @@ export function QuickSalePage({
       }
       setNfseState({ status: 'authorized', message: outcome.message, outcome })
     } catch (err) {
+      // Cliente sem CPF/CNPJ, e-mail ou endereço: pede os dados antes de mandar à prefeitura.
+      const pending = nfseTomadorPending(err)
+      if (pending) {
+        setNfseState(null)
+        setNfseTomador(pending)
+        setModal('nfse-tomador')
+        return
+      }
       const message = err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFS-e.' : nfseErrorMessage(err)
       setNfseState({ status: 'error', message })
       setNfceNotice(`NFS-e da venda ${sale.code ? `#${sale.code} ` : ''}não foi emitida: ${message}`)
@@ -2695,6 +2709,18 @@ export function QuickSalePage({
             </div>
           </div>
         </div>
+      )}
+
+      {modal === 'nfse-tomador' && nfseTomador && savedSale && (
+        <NfseTomadorModal
+          initial={nfseTomador.tomador}
+          missing={nfseTomador.missing}
+          onSkip={() => {
+            setNfseTomador(null)
+            continueAfterNfse(savedSale)
+          }}
+          onSubmit={(tomador) => void emitNfse(savedSale, tomador)}
+        />
       )}
 
       {modal === 'nfse' && nfseState && (
