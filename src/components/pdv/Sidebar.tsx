@@ -1,6 +1,6 @@
 import { GridIcon, SettingsIcon, CoinIcon, FileTextIcon, WalletIcon, QrCodeIcon, ClockIcon } from '../icons'
 
-export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'cash-register' | 'tokens' | 'sales'
+export type PdvScreen = 'tables' | 'settings' | 'quick-sale' | 'nfce' | 'nfse' | 'cash-register' | 'tokens' | 'sales'
 
 interface SidebarProps {
   screen: PdvScreen
@@ -8,6 +8,7 @@ interface SidebarProps {
   showTables?: boolean
   showQuickSale?: boolean
   showNfce?: boolean
+  showNfse?: boolean
   showCashRegister?: boolean
   showTokens?: boolean
   showSalesHistory?: boolean
@@ -21,6 +22,7 @@ export function Sidebar({
   showTables = true,
   showQuickSale = false,
   showNfce = false,
+  showNfse = false,
   showCashRegister = false,
   showTokens = false,
   showSalesHistory = false,
@@ -87,6 +89,21 @@ export function Sidebar({
           NFC-e
         </button>
       )}
+      {showNfse && (
+        <button
+          type="button"
+          onClick={() => onNavigate('nfse')}
+          title="NFS-e"
+          className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold transition ${
+            screen === 'nfse'
+              ? 'bg-[var(--blue-100)] text-[var(--blue-700)]'
+              : 'text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]'
+          }`}
+        >
+          <FileTextIcon className="h-4 w-4" />
+          NFS-e
+        </button>
+      )}
       {showCashRegister && (
         <button
           type="button"
@@ -141,6 +158,7 @@ export function MobileNav({
   showTables = true,
   showQuickSale = false,
   showNfce = false,
+  showNfse = false,
   showCashRegister = false,
   showTokens = false,
   showSalesHistory = false,
@@ -150,6 +168,7 @@ export function MobileNav({
     showQuickSale && { key: 'quick-sale' as const, label: 'Venda', icon: CoinIcon },
     showSalesHistory && { key: 'sales' as const, label: 'Histórico', icon: ClockIcon },
     showNfce && { key: 'nfce' as const, label: 'NFC-e', icon: FileTextIcon },
+    showNfse && { key: 'nfse' as const, label: 'NFS-e', icon: FileTextIcon },
     showCashRegister && { key: 'cash-register' as const, label: 'Caixa', icon: WalletIcon },
     showTokens && { key: 'tokens' as const, label: 'Fichas', icon: QrCodeIcon },
     { key: 'settings' as const, label: 'Ajustes', icon: SettingsIcon },

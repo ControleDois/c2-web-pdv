@@ -188,6 +188,55 @@ export function fetchNfceHistory(
   )
 }
 
+export interface NfseHistoryItem {
+  id: string
+  code?: number
+  status: number
+  numero_nfse?: string | null
+  numero_dps?: number | null
+  mensagem_sefaz?: string | null
+  data_emissao?: string | null
+  created_at?: string
+  valor_servico?: number | null
+  desconto_incondicionado?: number | null
+  razao_social_tomador?: string | null
+  telefone_tomador?: string | null
+  descricao_servico?: string | null
+  people?: { id: string; name: string; phone?: string | null } | null
+  sale?: { id: string; code?: number } | null
+}
+
+// NFS-e da empresa, mais recente primeiro (mesma listagem de Notas de Serviço do administrativo).
+export function fetchNfseHistory(token: string, companyId: string, options: { page?: number; limit?: number } = {}) {
+  return apiGet<Paginated<NfseHistoryItem>>(
+    '/nfse',
+    { companyId, page: String(options.page ?? 1), limit: String(options.limit ?? 20) },
+    token
+  )
+}
+
+// Reenvia a mesma NFS-e (rejeitada ou rascunho) - o backend refaz prestador, número da DPS e tomador.
+export function resendNfse(token: string, nfseId: string) {
+  return apiPost<{ nfse?: NfseHistoryItem }>(`/nfse/send/${nfseId}`, {}, token)
+}
+
+// Logs da NFS-e no mesmo formato dos da NFC-e (a API devolve os campos em snake_case).
+export async function fetchNfseLogs(token: string, nfseId: string): Promise<NfceLogRecord[]> {
+  const rows = await apiGet<Record<string, unknown>[]>(`/nfse/${nfseId}/logs`, {}, token)
+  return (rows || []).map((row) => ({
+    id: String(row.id),
+    code: row.code as number | undefined,
+    phase: (row.phase as string) ?? null,
+    action: (row.action as string) ?? null,
+    status: (row.status as number) ?? null,
+    httpStatus: ((row.httpStatus ?? row.http_status) as number) ?? null,
+    requestPayload: ((row.requestPayload ?? row.request_payload) as string) ?? null,
+    responsePayload: ((row.responsePayload ?? row.response_payload) as string) ?? null,
+    errorMessage: ((row.errorMessage ?? row.error_message) as string) ?? null,
+    createdAt: (row.createdAt ?? row.created_at) as string | undefined,
+  }))
+}
+
 export interface NfceItemDetail {
   numero_item: string
   codigo_produto: string

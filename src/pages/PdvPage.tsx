@@ -3,6 +3,7 @@ import { ProductSyncPage } from './ProductSyncPage'
 import { QuickSaleSettingsPage } from './QuickSaleSettingsPage'
 import { QuickSalePage } from './QuickSalePage'
 import { NfceListPage } from './NfceListPage'
+import { NfseListPage } from './NfseListPage'
 import { TokenRedeemPage } from './TokenRedeemPage'
 import { SalesHistoryPage } from './SalesHistoryPage'
 import { CashRegisterPage } from './CashRegisterPage'
@@ -47,6 +48,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   // Menu NFC-e só aparece se a empresa realmente emite NFC-e pelo PDV
   // (ajuste "NFC-e na venda rápida" em Configurações → Venda Rápida).
   const nfceEnabled = Boolean(company.config?.quick_sale_nfce_mode && company.config.quick_sale_nfce_mode !== 'off')
+  const nfseEnabled = Boolean(company.config?.quick_sale_nfse_mode && company.config.quick_sale_nfse_mode !== 'off')
   // Menu Caixa só aparece se a empresa tiver o controle de caixa ativo
   // (Configurações → Caixa no administrativo).
   const cashRegisterEnabled = Number(company.config?.central_box_active || 0) === 1
@@ -304,6 +306,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     showTables: !quickSaleOnlyMode,
     showQuickSale: quickSaleEnabled,
     showNfce: nfceEnabled,
+    showNfse: nfseEnabled,
     showCashRegister: cashRegisterEnabled,
     showTokens: tokensEnabled,
     showSalesHistory: quickSaleEnabled,
@@ -317,6 +320,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         showTables={!quickSaleOnlyMode}
         showQuickSale={quickSaleEnabled}
         showNfce={nfceEnabled}
+        showNfse={nfseEnabled}
         showCashRegister={cashRegisterEnabled}
         showTokens={tokensEnabled}
         showSalesHistory={quickSaleEnabled}
@@ -399,6 +403,8 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
           <TokenRedeemPage session={session} company={company} />
         ) : screen === 'nfce' ? (
           <NfceListPage session={session} company={company} />
+        ) : screen === 'nfse' ? (
+          <NfseListPage session={session} company={company} />
         ) : screen === 'cash-register' ? (
           <CashRegisterPage session={session} company={company} />
         ) : (

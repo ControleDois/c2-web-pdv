@@ -226,6 +226,9 @@ export interface QuickSaleItem {
   payments: { name: string; amount: number }[]
   // status: 1 processando, 2 autorizada, 3 erro
   nfce: { id: string; status: number; numero: number | null } | null
+  has_service?: boolean
+  // status: 0 rascunho, 1 processando, 2 autorizada, 3 erro, 4 cancelada
+  nfse?: { id: string; status: number; numero: string | null; mensagem: string | null } | null
   tokens: { issued: number; redeemed: number; canceled: number }
 }
 

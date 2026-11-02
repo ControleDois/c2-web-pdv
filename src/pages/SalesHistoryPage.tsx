@@ -8,14 +8,25 @@ import {
   type PrintDocument,
   type QuickSaleItem,
 } from '../lib/printing'
-import { fetchNfceDetails, fetchNfceQrCode } from '../lib/nfce'
+import {
+  fetchNfceDetails,
+  fetchNfceQrCode,
+  generateNfseFromSale,
+  nfseErrorMessage,
+  nfseTomadorPending,
+  waitNfseOutcome,
+  type NfseTomador,
+  type NfseTomadorPending,
+} from '../lib/nfce'
 import { ApiError } from '../lib/api'
 import { formatCurrency } from '../lib/format'
-import { PrinterIcon, RefreshIcon, SearchIcon, WhatsappIcon } from '../components/icons'
+import { FileTextIcon, PrinterIcon, RefreshIcon, SearchIcon, WhatsappIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 import type { PdvPrinters } from '../lib/terminal'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { NfceWhatsappModal } from '../components/pdv/NfceWhatsappModal'
+import { NfseDanfseModal } from '../components/pdv/NfseDanfseModal'
+import { NfseTomadorModal } from '../components/pdv/NfseTomadorModal'
 
 interface SalesHistoryPageProps {
   session: AuthSession
@@ -27,6 +38,14 @@ const NFCE_META: Record<number, { label: string; className: string }> = {
   1: { label: 'NFC-e processando', className: 'bg-[var(--amber-100)] text-[var(--amber-500)]' },
   2: { label: 'NFC-e autorizada', className: 'bg-[var(--green-100)] text-[var(--green-600)]' },
   3: { label: 'NFC-e com erro', className: 'bg-[var(--red-100)] text-[var(--red-500)]' },
+}
+
+const NFSE_META: Record<number, { label: string; className: string }> = {
+  0: { label: 'NFS-e rascunho', className: 'bg-[var(--page)] text-[var(--ink-soft)]' },
+  1: { label: 'NFS-e processando', className: 'bg-[var(--amber-100)] text-[var(--amber-500)]' },
+  2: { label: 'NFS-e autorizada', className: 'bg-[var(--green-100)] text-[var(--green-600)]' },
+  3: { label: 'NFS-e com erro', className: 'bg-[var(--red-100)] text-[var(--red-500)]' },
+  4: { label: 'NFS-e cancelada', className: 'bg-[var(--page)] text-[var(--muted)]' },
 }
 
 function formatDateTime(iso?: string | null): string {
@@ -47,7 +66,14 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
     documents: PrintDocument[]
     whatsapp?: { sale: QuickSaleItem; nfeId: string; numero: number | null }
   } | null>(null)
-  const [whatsappTarget, setWhatsappTarget] = useState<{ sale: QuickSaleItem; nfeId: string; numero: number | null } | null>(null)
+  const [whatsappTarget, setWhatsappTarget] = useState<{
+    sale: QuickSaleItem
+    nfeId: string
+    numero: number | string | null
+    kind?: 'nfce' | 'nfse'
+  } | null>(null)
+  const [danfseTarget, setDanfseTarget] = useState<QuickSaleItem | null>(null)
+  const [tomadorTarget, setTomadorTarget] = useState<{ sale: QuickSaleItem; pending: NfseTomadorPending } | null>(null)
 
   const [sales, setSales] = useState<QuickSaleItem[]>([])
   const [search, setSearch] = useState('')
@@ -72,6 +98,37 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
 
   function setNotice(key: string, text: string, isError = false) {
     setNotices((current) => ({ ...current, [key]: { text, error: isError } }))
+  }
+
+  // Emite (ou reenvia, se deu erro) a NFS-e da venda. Faltando dados do cliente, abre a tela do tomador.
+  async function emitNfse(sale: QuickSaleItem, tomador?: NfseTomador) {
+    if (busyKey) return
+    setBusyKey(`${sale.id}:nfse`)
+    setTomadorTarget(null)
+    setNotice(sale.id, 'Enviando NFS-e…')
+    try {
+      const result = await generateNfseFromSale(token, sale.id, tomador)
+      const nfseId = result.nfse?.id
+      if (!nfseId) throw new Error('sem-id')
+      setNotice(sale.id, 'Aguardando a autorização da prefeitura…')
+      const outcome = await waitNfseOutcome(token, nfseId)
+      setNotice(
+        sale.id,
+        outcome.authorized ? `NFS-e autorizada${outcome.number ? ` (nº ${outcome.number})` : ''}.` : outcome.message,
+        !outcome.authorized && !outcome.pending
+      )
+      load()
+    } catch (err) {
+      const pending = nfseTomadorPending(err)
+      if (pending) {
+        setNotice(sale.id, '')
+        setTomadorTarget({ sale, pending })
+      } else {
+        setNotice(sale.id, err instanceof Error && err.message === 'sem-id' ? 'Não foi possível enviar a NFS-e.' : nfseErrorMessage(err), true)
+      }
+    } finally {
+      setBusyKey(null)
+    }
   }
 
   async function run(sale: QuickSaleItem, action: 'receipt' | 'nfce' | 'tokens') {
@@ -149,7 +206,7 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-[18px] font-bold text-[var(--ink)]">Vendas</h1>
-          <p className="text-[12.5px] text-[var(--ink-soft)]">Reimprima o comprovante, a NFC-e e as fichas de uma venda.</p>
+          <p className="text-[12.5px] text-[var(--ink-soft)]">Reimprima o comprovante, a NFC-e, a NFS-e e as fichas de uma venda.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
@@ -198,6 +255,7 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
           token={token}
           companyId={company.id}
           nfeId={whatsappTarget.nfeId}
+          kind={whatsappTarget.kind}
           numero={whatsappTarget.numero}
           defaultName={whatsappTarget.sale.client_name ?? undefined}
           onClose={() => setWhatsappTarget(null)}
@@ -205,6 +263,25 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
             setNotice(whatsappTarget.sale.id, message)
             setWhatsappTarget(null)
           }}
+        />
+      )}
+      {danfseTarget?.nfse && (
+        <NfseDanfseModal
+          token={token}
+          companyId={company.id}
+          nfseId={danfseTarget.nfse.id}
+          numero={danfseTarget.nfse.numero}
+          defaultName={danfseTarget.client_name ?? undefined}
+          onClose={() => setDanfseTarget(null)}
+          onSent={(message) => setNotice(danfseTarget.id, message)}
+        />
+      )}
+      {tomadorTarget && (
+        <NfseTomadorModal
+          initial={tomadorTarget.pending.tomador}
+          missing={tomadorTarget.pending.missing}
+          onSkip={() => setTomadorTarget(null)}
+          onSubmit={(tomador) => void emitNfse(tomadorTarget.sale, tomador)}
         />
       )}
       {error && <p className="mb-3 text-[12.5px] font-medium text-[var(--red-500)]">{error}</p>}
@@ -217,6 +294,9 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
         ) : (
           sales.map((sale) => {
             const meta = sale.nfce ? NFCE_META[sale.nfce.status] : null
+            const nfseMeta = sale.nfse ? NFSE_META[sale.nfse.status] : null
+            const nfseStatus = sale.nfse?.status
+            const canEmitNfse = Boolean(sale.has_service) && (nfseStatus === undefined || nfseStatus === 0 || nfseStatus === 3)
             const notice = notices[sale.id]
             const tokensTotal = sale.tokens.issued + sale.tokens.redeemed + sale.tokens.canceled
             return (
@@ -233,6 +313,12 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {meta && <span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold ${meta.className}`}>{meta.label}</span>}
+                    {nfseMeta && (
+                      <span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold ${nfseMeta.className}`}>
+                        {nfseMeta.label}
+                        {sale.nfse?.numero ? ` nº ${sale.nfse.numero}` : ''}
+                      </span>
+                    )}
                     {tokensTotal > 0 && (
                       <span className="rounded-full bg-[var(--blue-100)] px-2.5 py-1 text-[10.5px] font-bold text-[var(--blue-700)]">
                         {tokensTotal} ficha{tokensTotal === 1 ? '' : 's'}
@@ -241,6 +327,12 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
                     )}
                   </div>
                 </div>
+
+                {nfseStatus === 3 && sale.nfse?.mensagem && (
+                  <p className="mt-2 rounded-lg bg-[var(--red-100)] px-3 py-2 text-[11.5px] text-[var(--red-500)]">
+                    NFS-e: {sale.nfse.mensagem}
+                  </p>
+                )}
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
@@ -268,7 +360,39 @@ export function SalesHistoryPage({ session, company, printers }: SalesHistoryPag
                       disabled={Boolean(busyKey)}
                       className="flex items-center gap-1.5 rounded-lg border border-[var(--green-600)] px-3 py-1.5 text-[12px] font-bold text-[var(--green-600)] hover:bg-[var(--green-100)] disabled:opacity-60"
                     >
-                      <WhatsappIcon className="h-3.5 w-3.5" /> WhatsApp
+                      <WhatsappIcon className="h-3.5 w-3.5" /> NFC-e
+                    </button>
+                  )}
+                  {(nfseStatus === 2 || nfseStatus === 4) && (
+                    <button
+                      type="button"
+                      onClick={() => setDanfseTarget(sale)}
+                      disabled={Boolean(busyKey)}
+                      className="flex items-center gap-1.5 rounded-lg bg-[var(--blue-500)] px-3 py-1.5 text-[12px] font-bold text-white hover:bg-[var(--blue-700)] disabled:opacity-60"
+                    >
+                      <FileTextIcon className="h-3.5 w-3.5" /> DANFSe
+                    </button>
+                  )}
+                  {nfseStatus === 2 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWhatsappTarget({ sale, nfeId: (sale.nfse as { id: string }).id, numero: sale.nfse?.numero ?? null, kind: 'nfse' })
+                      }
+                      disabled={Boolean(busyKey)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--green-600)] px-3 py-1.5 text-[12px] font-bold text-[var(--green-600)] hover:bg-[var(--green-100)] disabled:opacity-60"
+                    >
+                      <WhatsappIcon className="h-3.5 w-3.5" /> NFS-e
+                    </button>
+                  )}
+                  {canEmitNfse && (
+                    <button
+                      type="button"
+                      onClick={() => void emitNfse(sale)}
+                      disabled={Boolean(busyKey)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--indigo-500)] px-3 py-1.5 text-[12px] font-bold text-[var(--indigo-500)] hover:bg-[var(--indigo-100)] disabled:opacity-60"
+                    >
+                      <FileTextIcon className="h-3.5 w-3.5" /> {nfseStatus === 3 ? 'Reenviar NFS-e' : 'Emitir NFS-e'}
                     </button>
                   )}
                   {sale.tokens.issued > 0 && (
