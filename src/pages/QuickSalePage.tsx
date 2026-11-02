@@ -20,6 +20,7 @@ import {
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
+import { ProductKindTag } from '../components/pdv/ProductKindTag'
 import { NfceWhatsappModal } from '../components/pdv/NfceWhatsappModal'
 import {
   fetchNfceDetails,
@@ -1543,8 +1544,9 @@ export function QuickSalePage({
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14.5px] font-semibold text-[var(--ink)]">{product.name}</span>
-                  <span className="block text-[11.5px] text-[var(--muted)]">
-                    {Number(product.role) === 1 ? 'Serviço' : product.code ? `Cód. ${product.code}` : product.barcode || ''}
+                  <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
+                    <ProductKindTag role={product.role} />
+                    <span className="truncate">{product.code ? `Cód. ${product.code}` : product.barcode || ''}</span>
                   </span>
                 </span>
                 <span className="flex-none text-[15px] font-bold text-[var(--green-600)]">
@@ -2083,8 +2085,9 @@ export function QuickSalePage({
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-bold text-[var(--ink)]">{product.name}</p>
-                    <p className="text-[11.5px] text-[var(--ink-soft)]">
-                      {product.code ? `Cód. ${product.code}` : product.barcode || ''}
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-[var(--ink-soft)]">
+                      <ProductKindTag role={product.role} />
+                      <span className="truncate">{product.code ? `Cód. ${product.code}` : product.barcode || ''}</span>
                     </p>
                   </div>
                   <p className={`flex-none text-[15px] font-bold ${marked ? 'text-[var(--green-600)]' : 'text-[var(--ink)]'}`}>
@@ -2265,8 +2268,9 @@ export function QuickSalePage({
                       >
                         <td className="py-2.5 pl-4 pr-2">
                           <p className="font-semibold text-[var(--ink)]">{product.name}</p>
-                          <p className="text-[11px] text-[var(--muted)]">
-                            {product.code ? `Cód. ${product.code}` : product.barcode || '—'}
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--muted)]">
+                            <ProductKindTag role={product.role} />
+                            <span>{product.code ? `Cód. ${product.code}` : product.barcode || '—'}</span>
                           </p>
                         </td>
                         <td className="px-2 py-2.5 text-right font-semibold text-[var(--ink)]">
