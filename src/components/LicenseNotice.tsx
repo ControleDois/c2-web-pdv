@@ -136,8 +136,9 @@ export function LicenseNotice({ session, company }: LicenseNoticeProps) {
 
       {open && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 print-hide" onClick={() => setOpen(false)}>
+          {/* Largo e baixo: PIX à esquerda, valor e boleto à direita — cabe em 1360x768 sem rolar. */}
           <div
-            className="max-h-[92vh] w-full max-w-[520px] overflow-y-auto rounded-2xl bg-[var(--surface)] p-6 shadow-[var(--card-shadow)]"
+            className="max-h-[94vh] w-full max-w-[880px] overflow-y-auto rounded-2xl bg-[var(--surface)] p-5 shadow-[var(--card-shadow)] sm:p-6"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -157,71 +158,61 @@ export function LicenseNotice({ session, company }: LicenseNoticeProps) {
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-[var(--page)] p-4">
-              <div>
-                <p className="text-[11px] font-bold tracking-wide text-[var(--muted)] uppercase">Valor</p>
-                <p className="text-[18px] font-bold text-[var(--ink)]">{notice.amount !== null ? formatCurrency(notice.amount) : '—'}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold tracking-wide text-[var(--muted)] uppercase">Vencimento</p>
-                <p className="text-[18px] font-bold text-[var(--ink)]">{brDate(notice.due_date)}</p>
-              </div>
-            </div>
+            <div className={`mt-4 grid gap-4 ${boleto && pix ? 'md:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
+              {boleto && pix && (
+                <div className="flex flex-col items-center rounded-xl border border-[var(--border)] p-4 text-center">
+                  <p className="text-[13.5px] font-bold text-[var(--ink)]">Pagar com PIX</p>
+                  <p className="text-[12px] text-[var(--muted)]">Leia o QR Code no app do banco ou use o copia e cola.</p>
+                  {qr && <img src={qr} alt="QR Code do PIX" className="my-3 h-48 w-48 rounded-lg bg-white p-1.5" />}
+                  <CopyButton value={pix} label="Copiar PIX copia e cola" />
+                </div>
+              )}
 
-            {boleto ? (
-              <div className="mt-4 flex flex-col gap-4">
-                {pix && (
-                  <div className="rounded-xl border border-[var(--border)] p-4">
-                    <p className="text-[13.5px] font-bold text-[var(--ink)]">Pagar com PIX</p>
-                    <p className="text-[12px] text-[var(--muted)]">Abra o app do seu banco, escolha PIX e leia o QR Code ou use o copia e cola.</p>
-                    {qr && <img src={qr} alt="QR Code do PIX" className="mx-auto my-3 h-44 w-44 rounded-lg bg-white p-1.5" />}
-                    <div className="flex justify-center">
-                      <CopyButton value={pix} label="Copiar PIX copia e cola" />
-                    </div>
+              <div className="flex min-w-0 flex-col gap-4">
+                <div className="grid grid-cols-2 gap-3 rounded-xl bg-[var(--page)] p-4">
+                  <div>
+                    <p className="text-[11px] font-bold tracking-wide text-[var(--muted)] uppercase">Valor</p>
+                    <p className="text-[20px] font-bold text-[var(--ink)]">{notice.amount !== null ? formatCurrency(notice.amount) : '—'}</p>
                   </div>
-                )}
+                  <div>
+                    <p className="text-[11px] font-bold tracking-wide text-[var(--muted)] uppercase">Vencimento</p>
+                    <p className="text-[20px] font-bold text-[var(--ink)]">{brDate(notice.due_date)}</p>
+                  </div>
+                </div>
 
-                {(boleto.pdf_url || boleto.digitable_line) && (
-                  <div className="rounded-xl border border-[var(--border)] p-4">
-                    <p className="text-[13.5px] font-bold text-[var(--ink)]">Pagar com boleto</p>
-                    {boleto.digitable_line && (
-                      <p className="mt-1 break-all rounded-lg bg-[var(--page)] px-3 py-2 font-mono text-[12.5px] text-[var(--ink)]">
-                        {boleto.digitable_line}
-                      </p>
-                    )}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {boleto.digitable_line && <CopyButton value={boleto.digitable_line} label="Copiar linha digitável" />}
-                      {boleto.pdf_url && (
-                        <a
-                          href={boleto.pdf_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1.5 rounded-lg bg-[var(--blue-500)] px-3 py-2 text-[12.5px] font-bold text-white hover:bg-[var(--blue-700)]"
-                        >
-                          <FileTextIcon className="h-3.5 w-3.5" />
-                          Baixar boleto (PDF)
-                        </a>
+                {boleto ? (
+                  (boleto.pdf_url || boleto.digitable_line) && (
+                    <div className="rounded-xl border border-[var(--border)] p-4">
+                      <p className="text-[13.5px] font-bold text-[var(--ink)]">Pagar com boleto</p>
+                      {boleto.digitable_line && (
+                        <p className="mt-2 break-all rounded-lg bg-[var(--page)] px-3 py-2 font-mono text-[12.5px] text-[var(--ink)]">
+                          {boleto.digitable_line}
+                        </p>
                       )}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {boleto.digitable_line && <CopyButton value={boleto.digitable_line} label="Copiar linha digitável" />}
+                        {boleto.pdf_url && (
+                          <a
+                            href={boleto.pdf_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1.5 rounded-lg bg-[var(--blue-500)] px-3 py-2 text-[12.5px] font-bold text-white hover:bg-[var(--blue-700)]"
+                          >
+                            <FileTextIcon className="h-3.5 w-3.5" />
+                            Baixar boleto (PDF)
+                          </a>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )
+                ) : (
+                  <p className="rounded-xl bg-[var(--page)] px-4 py-3 text-[13px] text-[var(--ink-soft)]">
+                    O boleto ainda não está disponível aqui. Fale com o suporte do Controle Dois para receber a forma de pagamento.
+                  </p>
                 )}
+
+                <p className="text-[11.5px] text-[var(--muted)]">Depois do pagamento, o aviso some assim que o Controle Dois confirmar o recebimento.</p>
               </div>
-            ) : (
-              <p className="mt-4 rounded-xl bg-[var(--page)] px-4 py-3 text-[13px] text-[var(--ink-soft)]">
-                O boleto ainda não está disponível aqui. Fale com o suporte do Controle Dois para receber a forma de pagamento.
-              </p>
-            )}
-
-            <p className="mt-4 text-[11.5px] text-[var(--muted)]">Depois do pagamento, o aviso some assim que o Controle Dois confirmar o recebimento.</p>
-
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-xl bg-[var(--page)] px-5 py-2.5 text-[13.5px] font-bold text-[var(--ink-soft)] hover:text-[var(--ink)]"
-              >
-                Fechar
-              </button>
             </div>
           </div>
         </div>
