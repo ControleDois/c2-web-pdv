@@ -11,7 +11,7 @@ import { TerminalPickerPage } from './TerminalPickerPage'
 import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
-import { createPrintJob, type PrintDocument } from '../lib/printing'
+import { createPrintJob, reprintProductionOrder, type PrintDocument } from '../lib/printing'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
@@ -139,7 +139,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     if (quickSaleOnlyMode && screen === 'tables') setScreen('quick-sale')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickSaleOnlyMode])
-  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer } = useFoodTables(session, company)
+  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer, syncNow } = useFoodTables(session, company)
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -254,6 +254,17 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     setSelectedId(null)
     setSelectedTableId(null)
     reloadFromDb()
+    // Saiu da mesa: o que foi lançado vai já para o servidor (e para a cozinha/bar).
+    setTimeout(() => void syncNow(), 300)
+  }
+
+  // Manda o pedido da mesa aberta sem sair dela.
+  function sendTableOrderNow(table: FoodTable) {
+    return saveTable({ ...table, items: table.items.map((item) => ({ ...item, print_hold: false })) }).then(() => syncNow())
+  }
+
+  function reprintTableOrder(table: FoodTable) {
+    return reprintProductionOrder(session.token.token, company.id, table.id)
   }
 
   async function handleAdvanceDeliveryStatus(status: string) {
@@ -319,6 +330,8 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         onLoadIfoodCancellationReasons={handleLoadIfoodCancellationReasons}
         onCancelIfoodOrder={handleCancelIfoodOrder}
         onPrint={printTableDocument}
+        onSendOrder={() => sendTableOrderNow(selectedTable)}
+        onReprintOrder={() => reprintTableOrder(selectedTable)}
         companyName={company.people?.name || 'Controle Dois'}
         companyDocument={company.people?.document}
         acquirerStorageKey={`c2_pdv_card_acquirer_${company.id}`}

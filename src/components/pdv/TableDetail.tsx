@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FoodTable, FoodTableItem, FoodTablePayment } from '../../lib/foodTypes'
 import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId } from '../../lib/foodTypes'
-import { buildTableBillDocument, buildTableOrderDocument, type PrintDocument } from '../../lib/printing'
+import { buildTableBillDocument, type PrintDocument } from '../../lib/printing'
 import { PaymentModal, type PaymentModalLine } from './PaymentModal'
 import type { IfoodCancellationReason } from '../../lib/foodApi'
 import { ApiError } from '../../lib/api'
@@ -20,6 +20,9 @@ interface TableDetailProps {
   onCancelIfoodOrder: (code: string, reason: string) => Promise<void>
   // Manda para a impressora do terminal (ou abre a prévia, sem impressora).
   onPrint: (title: string, document: PrintDocument) => Promise<void>
+  // Pedido para a produção: o servidor separa por impressora (cozinha, bar...).
+  onSendOrder: () => Promise<unknown>
+  onReprintOrder: () => Promise<{ jobs: number }>
   companyName: string
   companyDocument?: string | null
   acquirerStorageKey?: string
@@ -57,6 +60,8 @@ export function TableDetail({
   onLoadIfoodCancellationReasons,
   onCancelIfoodOrder,
   onPrint,
+  onSendOrder,
+  onReprintOrder,
   companyName,
   companyDocument,
   acquirerStorageKey,
@@ -162,6 +167,7 @@ export function TableDetail({
       removed: false,
       selected: false,
       pending_print: true,
+      print_hold: true,
       author: authorId,
       author_name: authorName,
     }
@@ -298,7 +304,7 @@ export function TableDetail({
   }
 
   const tableLabel = delivery ? `Delivery ${table.number}` : `Mesa ${table.number}`
-  const pendingItems = items.filter((item) => item.pending_print)
+  const heldItems = items.filter((item) => item.print_hold)
 
   function printItems() {
     return items.map((item) => ({ name: item.name, quantity: item.quantity, total: item.sub_total, observation: item.observation }))
@@ -315,33 +321,25 @@ export function TableDetail({
     }
   }
 
-  // Pedido do que foi lançado e ainda não saiu na impressora (cozinha/bar).
-  async function printPendingOrder(source: FoodTable = table) {
-    const pending = activeItems(source).filter((item) => item.pending_print)
-    if (pending.length === 0) return source
-    const ok = await print(
-      `Pedido ${tableLabel}`,
-      buildTableOrderDocument({
-        label: tableLabel,
-        authorName,
-        items: pending.map((item) => ({ name: item.name, quantity: item.quantity, observation: item.observation })),
-      })
-    )
-    if (!ok) return source
-    const ids = new Set(pending.map((item) => item.id))
-    return { ...source, items: source.items.map((item) => (ids.has(item.id) ? { ...item, pending_print: false } : item)) }
-  }
-
-  async function handlePrintOrder() {
-    const next = await printPendingOrder()
-    if (next !== table) onSave(next)
-  }
-
-  async function leaveTable() {
-    if (pendingItems.length > 0) {
-      const next = await printPendingOrder()
-      if (next !== table) onSave(next)
+  async function handleSendOrder() {
+    try {
+      await onSendOrder()
+      setPrintNotice(null)
+    } catch {
+      setPrintNotice('Não foi possível enviar agora. O pedido vai assim que a internet voltar.')
     }
+  }
+
+  async function handleReprintOrder() {
+    try {
+      const result = await onReprintOrder()
+      setPrintNotice(result.jobs ? null : 'Nada para reimprimir: confira as impressoras dos pedidos em Impressoras > Pedidos.')
+    } catch (err) {
+      setPrintNotice(`Não foi possível reimprimir: ${err instanceof ApiError ? err.message : 'tente novamente.'}`)
+    }
+  }
+
+  function leaveTable() {
     onBack()
   }
 
@@ -370,8 +368,7 @@ export function TableDetail({
       openReceiveTotal()
       return
     }
-    const printed = await printPendingOrder()
-    const next: FoodTable = { ...printed, items: printed.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit], status: 'closed', closed_at: nowIso() }
+    const next: FoodTable = { ...table, items: table.items.map((i) => ({ ...i, selected: false, print_hold: false })), audit: [...table.audit], status: 'closed', closed_at: nowIso() }
     pushAudit(next, 'FECHAMENTO DE MESA', 'success')
     onSave(next)
     onBack()
@@ -380,8 +377,7 @@ export function TableDetail({
   async function confirmReceiveTotal(lines: PaymentModalLine[], change: number) {
     const receivePayments: FoodTablePayment[] = lines.map((line) => ({ form_payment: line.form_payment, amount: line.amount }))
     setReceiveTotalOpen(false)
-    const printed = await printPendingOrder()
-    const next: FoodTable = { ...printed, sales: [...table.sales], partials: [...table.partials], items: printed.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit] }
+    const next: FoodTable = { ...table, sales: [...table.sales], partials: [...table.partials], items: table.items.map((i) => ({ ...i, selected: false, print_hold: false })), audit: [...table.audit] }
     next.sales.push({
       id: newLocalId(),
       companyId: table.companyId,
@@ -441,7 +437,7 @@ export function TableDetail({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-none items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-        <button type="button" onClick={() => void leaveTable()} className="flex items-center gap-1 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]">
+        <button type="button" onClick={leaveTable} className="flex items-center gap-1 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]">
           <ChevronLeftIcon className="h-3.5 w-3.5" />
           Sair
         </button>
@@ -545,7 +541,7 @@ export function TableDetail({
                 type="button"
                 onClick={() => setSelectedItemId(item.id)}
                 className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-left ${
-                  selectedItemId === item.id ? 'bg-[var(--blue-100)]' : item.pending_print ? 'bg-[var(--green-100)]' : 'bg-[var(--surface)] border border-[var(--border)]'
+                  selectedItemId === item.id ? 'bg-[var(--blue-100)]' : item.print_hold ? 'bg-[var(--green-100)]' : 'bg-[var(--surface)] border border-[var(--border)]'
                 }`}
               >
                 <span className="min-w-0 flex-1">
@@ -636,15 +632,25 @@ export function TableDetail({
             {items.length > 0 && table.sales.length === 0 && receiveTotal > 0 ? 'Receber e fechar' : 'Fechar mesa'}
           </button>
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="mt-2 grid grid-cols-3 gap-2">
           <button
             type="button"
-            onClick={() => void handlePrintOrder()}
-            disabled={pendingItems.length === 0}
+            onClick={() => void handleSendOrder()}
+            disabled={heldItems.length === 0}
+            title="Manda para a cozinha/bar sem sair da mesa (ao sair, vai sozinho)"
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--green-600)] py-2.5 text-[12.5px] font-bold text-[var(--green-600)] disabled:border-[var(--border)] disabled:font-semibold disabled:text-[var(--ink-soft)] disabled:opacity-40"
+          >
+            <PrinterIcon className="h-3.5 w-3.5" />
+            Enviar pedido{heldItems.length > 0 ? ` (${heldItems.length})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleReprintOrder()}
+            disabled={items.length === 0}
             className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40"
           >
             <PrinterIcon className="h-3.5 w-3.5" />
-            Imprimir pedido{pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}
+            Reimprimir pedido
           </button>
           <button
             type="button"

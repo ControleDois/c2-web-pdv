@@ -62,48 +62,60 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.id])
 
-  // Push a cada 10s de tudo que estiver synchronized:'N'.
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (syncingRef.current) return
-      syncingRef.current = true
-      try {
-        const pending = (await getAllTables()).filter((table) => table.synchronized === 'N')
-        for (const table of pending) {
-          const payload: FoodSyncPayload = {
-            device_id: getSocketId() || '',
-            id: table.id,
-            companyId: company.id,
-            number: table.number,
-            status: table.status,
-            opened_at: table.opened_at,
-            closed_at: table.closed_at,
-            items: table.items,
-            orders: table.orders,
-            partials: table.partials,
-            sales: table.sales,
-            audit: table.audit,
-          }
-          try {
-            await syncTable(session.token.token, company.id, payload)
-            if (table.status === 'closed' || table.status === 'canceled') {
-              await deleteTable(table.id)
-            } else {
-              await putTable({ ...table, synchronized: 'S' })
-            }
-          } catch {
-            // Fica pendente, tenta de novo no próximo ciclo — mesmo
-            // comportamento do Angular (sem retry/backoff especial).
-          }
+  // Envia ao servidor tudo que estiver synchronized:'N'. A mesa aberta na tela com itens
+  // recém-lançados espera o operador sair (ou tocar em "Enviar pedido"): assim o pedido sai
+  // de uma vez na impressora da cozinha/bar, e não um papel por item.
+  const pushPending = useCallback(async () => {
+    if (syncingRef.current) return
+    syncingRef.current = true
+    try {
+      const pending = (await getAllTables()).filter((table) => table.synchronized === 'N')
+      for (const table of pending) {
+        const holding = table.items.some((item) => item.print_hold && !item.removed)
+        if (holding && table.id === selectedTableIdRef.current) continue
+        const payload: FoodSyncPayload = {
+          device_id: getSocketId() || '',
+          id: table.id,
+          companyId: company.id,
+          number: table.number,
+          status: table.status,
+          opened_at: table.opened_at,
+          closed_at: table.closed_at,
+          items: table.items.map(({ print_hold: _hold, ...item }) => item),
+          orders: table.orders,
+          partials: table.partials,
+          sales: table.sales,
+          audit: table.audit,
         }
-        await reloadFromDb()
-      } finally {
-        syncingRef.current = false
+        try {
+          await syncTable(session.token.token, company.id, payload)
+          if (table.status === 'closed' || table.status === 'canceled') {
+            await deleteTable(table.id)
+          } else {
+            // Só marca como enviada se ninguém mexeu na mesa enquanto ia para o servidor.
+            const latest = (await getAllTables()).find((item) => item.id === table.id)
+            if (latest && latest.updatedAt === table.updatedAt) {
+              await putTable({
+                ...table,
+                synchronized: 'S',
+                items: table.items.map((item) => ({ ...item, print_hold: false, pending_print: false })),
+              })
+            }
+          }
+        } catch {
+          // Fica pendente, tenta de novo no próximo ciclo.
+        }
       }
-    }, SYNC_INTERVAL_MS)
-
-    return () => clearInterval(interval)
+      await reloadFromDb()
+    } finally {
+      syncingRef.current = false
+    }
   }, [session.token.token, company.id, reloadFromDb])
+
+  useEffect(() => {
+    const interval = setInterval(() => void pushPending(), SYNC_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [pushPending])
 
   // Socket.io: entra na sala da empresa e escuta atualização de mesa.
   useEffect(() => {
@@ -139,5 +151,5 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
     return updated
   }
 
-  return { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer: pullAndMerge }
+  return { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer: pullAndMerge, syncNow: pushPending }
 }

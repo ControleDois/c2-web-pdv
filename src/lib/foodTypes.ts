@@ -28,6 +28,8 @@ export interface FoodTableItem extends FoodBaseLocal {
   removed: boolean
   selected: boolean
   pending_print: boolean
+  // Lançado no PDV e ainda na tela: só vai para a produção quando o operador sai da mesa.
+  print_hold?: boolean
   observation?: string
   author: string
   author_name: string

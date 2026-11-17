@@ -258,28 +258,6 @@ export interface TablePrintItem {
   observation?: string
 }
 
-// Pedido para a cozinha/bar: só o que foi lançado e ainda não saiu, sem valores.
-export function buildTableOrderDocument(data: {
-  label: string
-  items: TablePrintItem[]
-  authorName?: string
-  date?: string
-}): PrintDocument {
-  const lines: PrintLine[] = [
-    { t: 'text', v: 'PEDIDO', align: 'center', bold: true, size: 2 },
-    { t: 'text', v: data.label.toUpperCase(), align: 'center', bold: true, size: 2 },
-    { t: 'text', v: dateTime(data.date ?? new Date().toISOString(), false), align: 'center' },
-  ]
-  if (data.authorName) lines.push({ t: 'text', v: `Atendente: ${data.authorName}`, align: 'center' })
-  lines.push({ t: 'hr' })
-  for (const item of data.items) {
-    lines.push({ t: 'text', v: `${quantity(item.quantity)} x ${item.name}`, bold: true, size: 2 })
-    if (item.observation) lines.push({ t: 'text', v: `  OBS: ${item.observation}` })
-  }
-  lines.push({ t: 'hr' }, { t: 'feed', n: 2 }, { t: 'cut' })
-  return { lines }
-}
-
 // Conta da mesa (conferência antes de pagar) ou comprovante do recebimento (com as formas de pagamento).
 export function buildTableBillDocument(data: {
   companyName: string
@@ -319,4 +297,9 @@ export function buildTableBillDocument(data: {
     { t: 'cut' }
   )
   return { lines }
+}
+
+// Reimprime o pedido da mesa nas impressoras de produção (cozinha, bar...).
+export function reprintProductionOrder(token: string, companyId: string, tableId: string) {
+  return apiPost<{ jobs: number }>(`/production-printing/tables/${tableId}/reprint`, { companyId }, token)
 }
