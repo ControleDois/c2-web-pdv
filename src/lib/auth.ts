@@ -58,6 +58,8 @@ export interface AuthCompany {
   // É essa flag que deve gatear telas restritas à matriz, como Licenças.
   is_master?: boolean
   [key: string]: unknown
+  // Marcada como favorita por este usuário (barra de favoritas na escolha de empresa)
+  isFavorite?: boolean
 }
 
 export interface AuthUser {
@@ -94,6 +96,10 @@ export async function signin(email: string, password: string) {
 // criadas/removidas/alteradas depois do login original.
 export function fetchMyCompanies(token: string) {
   return apiGet<{ user: AuthUser; companies: AuthCompany[] }>('/auth/me', {}, token)
+}
+
+export function setFavoriteCompany(token: string, companyId: string, favorite: boolean) {
+  return apiPost<{ companyId: string; isFavorite: boolean }>(`/auth/companies/${companyId}/favorite`, { favorite }, token)
 }
 
 export function saveSession(session: AuthSession) {
