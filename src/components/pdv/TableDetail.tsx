@@ -1,12 +1,13 @@
-import { Select } from '../form/Select'
 import { useEffect, useRef, useState } from 'react'
 import type { FoodTable, FoodTableItem, FoodTablePayment } from '../../lib/foodTypes'
-import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId, PAYMENT_METHODS } from '../../lib/foodTypes'
+import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId } from '../../lib/foodTypes'
+import { buildTableBillDocument, buildTableOrderDocument, type PrintDocument } from '../../lib/printing'
+import { PaymentModal, type PaymentModalLine } from './PaymentModal'
 import type { IfoodCancellationReason } from '../../lib/foodApi'
 import { ApiError } from '../../lib/api'
 import { filterProductBy, type LocalProduct } from '../../lib/db'
 import { formatCurrency } from '../../lib/format'
-import { ChevronLeftIcon, CopyIcon, TrashIcon, XCircleIcon } from '../icons'
+import { ChevronLeftIcon, CopyIcon, PrinterIcon, TrashIcon, XCircleIcon } from '../icons'
 
 interface TableDetailProps {
   table: FoodTable
@@ -17,6 +18,11 @@ interface TableDetailProps {
   onAdvanceDeliveryStatus: (status: string) => Promise<void>
   onLoadIfoodCancellationReasons: () => Promise<IfoodCancellationReason[]>
   onCancelIfoodOrder: (code: string, reason: string) => Promise<void>
+  // Manda para a impressora do terminal (ou abre a prévia, sem impressora).
+  onPrint: (title: string, document: PrintDocument) => Promise<void>
+  companyName: string
+  companyDocument?: string | null
+  acquirerStorageKey?: string
 }
 
 type InputMode = 'product' | 'quantity'
@@ -50,6 +56,10 @@ export function TableDetail({
   onAdvanceDeliveryStatus,
   onLoadIfoodCancellationReasons,
   onCancelIfoodOrder,
+  onPrint,
+  companyName,
+  companyDocument,
+  acquirerStorageKey,
 }: TableDetailProps) {
   const [inputMode, setInputMode] = useState<InputMode>('product')
   const [search, setSearch] = useState('')
@@ -77,9 +87,7 @@ export function TableDetail({
   const [deliveryError, setDeliveryError] = useState<string | null>(null)
 
   const [receiveTotalOpen, setReceiveTotalOpen] = useState(false)
-  const [receivePayments, setReceivePayments] = useState<FoodTablePayment[]>([])
-  const [receiveMethod, setReceiveMethod] = useState(9)
-  const [receiveAmount, setReceiveAmount] = useState('')
+  const [printNotice, setPrintNotice] = useState<string | null>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -185,7 +193,7 @@ export function TableDetail({
 
   function handleProductSubmit() {
     if (!search.trim()) {
-      onBack()
+      leaveTable()
       return
     }
     if (!selectedProduct) {
@@ -289,37 +297,91 @@ export function TableDetail({
     onBack()
   }
 
+  const tableLabel = delivery ? `Delivery ${table.number}` : `Mesa ${table.number}`
+  const pendingItems = items.filter((item) => item.pending_print)
+
+  function printItems() {
+    return items.map((item) => ({ name: item.name, quantity: item.quantity, total: item.sub_total, observation: item.observation }))
+  }
+
+  async function print(title: string, document: PrintDocument) {
+    try {
+      await onPrint(title, document)
+      setPrintNotice(null)
+      return true
+    } catch (err) {
+      setPrintNotice(`Não foi possível imprimir: ${err instanceof ApiError ? err.message : 'tente novamente.'}`)
+      return false
+    }
+  }
+
+  // Pedido do que foi lançado e ainda não saiu na impressora (cozinha/bar).
+  async function printPendingOrder(source: FoodTable = table) {
+    const pending = activeItems(source).filter((item) => item.pending_print)
+    if (pending.length === 0) return source
+    const ok = await print(
+      `Pedido ${tableLabel}`,
+      buildTableOrderDocument({
+        label: tableLabel,
+        authorName,
+        items: pending.map((item) => ({ name: item.name, quantity: item.quantity, observation: item.observation })),
+      })
+    )
+    if (!ok) return source
+    const ids = new Set(pending.map((item) => item.id))
+    return { ...source, items: source.items.map((item) => (ids.has(item.id) ? { ...item, pending_print: false } : item)) }
+  }
+
+  async function handlePrintOrder() {
+    const next = await printPendingOrder()
+    if (next !== table) onSave(next)
+  }
+
+  async function leaveTable() {
+    if (pendingItems.length > 0) {
+      const next = await printPendingOrder()
+      if (next !== table) onSave(next)
+    }
+    onBack()
+  }
+
+  function handlePrintBill() {
+    void print(
+      `Conta ${tableLabel}`,
+      buildTableBillDocument({
+        companyName,
+        companyDocument,
+        label: tableLabel,
+        items: printItems(),
+        subtotal,
+        deliveryFee,
+        alreadyReceived: partialTotal,
+        total: receiveTotal,
+      })
+    )
+  }
+
   function openReceiveTotal() {
-    setReceivePayments([])
-    setReceiveMethod(9)
-    setReceiveAmount(receiveTotal.toFixed(2))
     setReceiveTotalOpen(true)
   }
 
-  function handleCloseTable() {
-    if (items.length > 0 && table.sales.length === 0) {
+  async function handleCloseTable() {
+    if (items.length > 0 && table.sales.length === 0 && receiveTotal > 0) {
       openReceiveTotal()
       return
     }
-    const next: FoodTable = { ...table, items: table.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit], status: 'closed', closed_at: nowIso() }
+    const printed = await printPendingOrder()
+    const next: FoodTable = { ...printed, items: printed.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit], status: 'closed', closed_at: nowIso() }
     pushAudit(next, 'FECHAMENTO DE MESA', 'success')
     onSave(next)
     onBack()
   }
 
-  const receivePaymentsTotal = receivePayments.reduce((sum, p) => sum + p.amount, 0)
-  const receiveRemaining = Math.max(0, Math.round((receiveTotal - receivePaymentsTotal) * 100) / 100)
-
-  function addReceivePayment() {
-    const amount = Number(receiveAmount.replace(',', '.'))
-    if (!amount || amount <= 0 || amount > receiveRemaining + 0.009) return
-    setReceivePayments((prev) => [...prev, { form_payment: receiveMethod, amount }])
-    setReceiveAmount(Math.max(0, receiveRemaining - amount).toFixed(2))
-  }
-
-  function confirmReceiveTotal() {
-    if (Math.abs(receivePaymentsTotal - receiveTotal) > 0.009) return
-    const next: FoodTable = { ...table, sales: [...table.sales], partials: [...table.partials], items: table.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit] }
+  async function confirmReceiveTotal(lines: PaymentModalLine[], change: number) {
+    const receivePayments: FoodTablePayment[] = lines.map((line) => ({ form_payment: line.form_payment, amount: line.amount }))
+    setReceiveTotalOpen(false)
+    const printed = await printPendingOrder()
+    const next: FoodTable = { ...printed, sales: [...table.sales], partials: [...table.partials], items: printed.items.map((i) => ({ ...i, selected: false, pending_print: false })), audit: [...table.audit] }
     next.sales.push({
       id: newLocalId(),
       companyId: table.companyId,
@@ -335,7 +397,7 @@ export function TableDetail({
       total: receiveTotal,
       author: authorId,
       author_name: authorName,
-      payment_method: receivePayments[receivePayments.length - 1]?.form_payment ?? receiveMethod,
+      payment_method: receivePayments[receivePayments.length - 1]?.form_payment ?? 9,
       payments: receivePayments,
     })
     next.partials.push({
@@ -357,15 +419,29 @@ export function TableDetail({
     pushAudit(next, 'RECEBIMENTO TOTAL', 'success')
     next.status = 'closed'
     next.closed_at = nowIso()
-    setReceiveTotalOpen(false)
     onSave(next)
+    await print(
+      `Recebimento ${tableLabel}`,
+      buildTableBillDocument({
+        companyName,
+        companyDocument,
+        label: tableLabel,
+        items: printItems(),
+        subtotal,
+        deliveryFee,
+        alreadyReceived: partialTotal,
+        total: receiveTotal,
+        payments: lines.map((line) => ({ name: line.name, amount: line.received ?? line.amount })),
+        change,
+      })
+    )
     onBack()
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-none items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-        <button type="button" onClick={onBack} className="flex items-center gap-1 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]">
+        <button type="button" onClick={() => void leaveTable()} className="flex items-center gap-1 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]">
           <ChevronLeftIcon className="h-3.5 w-3.5" />
           Sair
         </button>
@@ -556,10 +632,33 @@ export function TableDetail({
             <XCircleIcon className="h-3.5 w-3.5" />
             {ifood ? 'Cancelar pedido' : 'Cancelar mesa'}
           </button>
-          <button type="button" onClick={handleCloseTable} className="rounded-xl bg-[var(--blue-500)] py-2.5 text-[12.5px] font-bold text-white">
-            Fechar mesa
+          <button type="button" onClick={() => void handleCloseTable()} className="rounded-xl bg-[var(--blue-500)] py-2.5 text-[12.5px] font-bold text-white">
+            {items.length > 0 && table.sales.length === 0 && receiveTotal > 0 ? 'Receber e fechar' : 'Fechar mesa'}
           </button>
         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => void handlePrintOrder()}
+            disabled={pendingItems.length === 0}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40"
+          >
+            <PrinterIcon className="h-3.5 w-3.5" />
+            Imprimir pedido{pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={handlePrintBill}
+            disabled={items.length === 0}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40"
+          >
+            <PrinterIcon className="h-3.5 w-3.5" />
+            Imprimir conta
+          </button>
+        </div>
+        {printNotice && (
+          <p className="mt-2 rounded-lg bg-[var(--red-100)] px-3 py-2 text-[12px] font-medium text-[var(--red-500)]">{printNotice}</p>
+        )}
       </div>
 
       {cancelItemOpen && (
@@ -672,63 +771,15 @@ export function TableDetail({
         </div>
       )}
 
-      {receiveTotalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setReceiveTotalOpen(false)}>
-          <div className="w-full max-w-[420px] rounded-2xl bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[14px] font-bold text-[var(--ink)]">Receber total</h2>
-            <p className="mt-1 text-[13px] text-[var(--ink-soft)]">A receber: {formatCurrency(receiveTotal)}</p>
-
-            <div className="mt-3 flex items-center gap-2">
-              <Select value={receiveMethod} onChange={(value) => setReceiveMethod(Number(value))} className="w-40 flex-none">
-                {PAYMENT_METHODS.map((method) => (
-                  <option key={method.value} value={method.value}>
-                    {method.label}
-                  </option>
-                ))}
-              </Select>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={receiveAmount}
-                onChange={(event) => setReceiveAmount(event.target.value)}
-                className="w-28 rounded-xl border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-[13px] text-[var(--ink)]"
-              />
-              <button type="button" onClick={addReceivePayment} className="rounded-xl bg-[var(--blue-500)] px-3 py-2 text-[12.5px] font-bold text-white">
-                Adicionar
-              </button>
-            </div>
-
-            {receivePayments.length > 0 && (
-              <div className="mt-3 flex flex-col gap-1.5">
-                {receivePayments.map((payment, index) => (
-                  <div key={index} className="flex items-center justify-between rounded-lg bg-[var(--page)] px-3 py-1.5 text-[12.5px]">
-                    <span>{PAYMENT_METHODS.find((m) => m.value === payment.form_payment)?.label}</span>
-                    <span className="flex items-center gap-2">
-                      {formatCurrency(payment.amount)}
-                      <button type="button" onClick={() => setReceivePayments((prev) => prev.filter((_, i) => i !== index))} className="text-[var(--red-500)]">
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <p className={`mt-3 text-[13px] font-bold ${receiveRemaining > 0 ? 'text-[var(--amber-500)]' : 'text-[var(--green-600)]'}`}>
-              Restante: {formatCurrency(receiveRemaining)}
-            </p>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setReceiveTotalOpen(false)} className="rounded-xl px-4 py-2 text-[13px] font-semibold text-[var(--ink-soft)]">
-                Voltar
-              </button>
-              <button type="button" onClick={confirmReceiveTotal} disabled={receiveRemaining > 0} className="rounded-xl bg-[var(--blue-500)] px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50">
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PaymentModal
+        open={receiveTotalOpen}
+        total={receiveTotal}
+        title={`Receber ${tableLabel}`}
+        confirmLabel="Receber e fechar"
+        acquirerStorageKey={acquirerStorageKey}
+        onClose={() => setReceiveTotalOpen(false)}
+        onConfirm={(lines, change) => void confirmReceiveTotal(lines, change)}
+      />
     </div>
   )
 }

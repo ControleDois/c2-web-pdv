@@ -248,3 +248,75 @@ export function reprintSaleTokens(token: string, companyId: string, saleId: stri
     token
   )
 }
+
+// ---- Mesas / comandas
+
+export interface TablePrintItem {
+  name: string
+  quantity: number
+  total?: number
+  observation?: string
+}
+
+// Pedido para a cozinha/bar: só o que foi lançado e ainda não saiu, sem valores.
+export function buildTableOrderDocument(data: {
+  label: string
+  items: TablePrintItem[]
+  authorName?: string
+  date?: string
+}): PrintDocument {
+  const lines: PrintLine[] = [
+    { t: 'text', v: 'PEDIDO', align: 'center', bold: true, size: 2 },
+    { t: 'text', v: data.label.toUpperCase(), align: 'center', bold: true, size: 2 },
+    { t: 'text', v: dateTime(data.date ?? new Date().toISOString(), false), align: 'center' },
+  ]
+  if (data.authorName) lines.push({ t: 'text', v: `Atendente: ${data.authorName}`, align: 'center' })
+  lines.push({ t: 'hr' })
+  for (const item of data.items) {
+    lines.push({ t: 'text', v: `${quantity(item.quantity)} x ${item.name}`, bold: true, size: 2 })
+    if (item.observation) lines.push({ t: 'text', v: `  OBS: ${item.observation}` })
+  }
+  lines.push({ t: 'hr' }, { t: 'feed', n: 2 }, { t: 'cut' })
+  return { lines }
+}
+
+// Conta da mesa (conferência antes de pagar) ou comprovante do recebimento (com as formas de pagamento).
+export function buildTableBillDocument(data: {
+  companyName: string
+  companyDocument?: string | null
+  label: string
+  items: TablePrintItem[]
+  subtotal: number
+  deliveryFee?: number
+  alreadyReceived?: number
+  total: number
+  payments?: { name: string; amount: number }[]
+  change?: number
+  date?: string
+}): PrintDocument {
+  const receipt = Boolean(data.payments?.length)
+  const lines: PrintLine[] = [{ t: 'text', v: data.companyName, align: 'center', bold: true }]
+  if (data.companyDocument) lines.push({ t: 'text', v: formatDocument(data.companyDocument), align: 'center' })
+  lines.push(
+    { t: 'text', v: receipt ? `RECEBIMENTO · ${data.label}` : `CONFERÊNCIA DE CONTA · ${data.label}`, align: 'center', bold: true },
+    { t: 'text', v: dateTime(data.date ?? new Date().toISOString(), false), align: 'center' },
+    { t: 'hr' }
+  )
+  for (const item of data.items) {
+    lines.push({ t: 'row', l: `${quantity(item.quantity)}x ${item.name}`, r: money(item.total) })
+  }
+  lines.push({ t: 'hr' }, { t: 'row', l: 'Subtotal', r: currency(data.subtotal) })
+  if (data.deliveryFee) lines.push({ t: 'row', l: 'Taxa de entrega', r: currency(data.deliveryFee) })
+  if (data.alreadyReceived) lines.push({ t: 'row', l: 'Já recebido', r: `-${currency(data.alreadyReceived)}` })
+  lines.push({ t: 'row', l: receipt ? 'TOTAL PAGO' : 'TOTAL A PAGAR', r: currency(data.total), bold: true })
+  for (const payment of data.payments ?? []) lines.push({ t: 'row', l: payment.name, r: currency(payment.amount) })
+  if (data.change && data.change > 0) lines.push({ t: 'row', l: 'Troco', r: currency(data.change), bold: true })
+  lines.push(
+    { t: 'feed', n: 1 },
+    { t: 'text', v: 'NÃO É DOCUMENTO FISCAL', align: 'center' },
+    { t: 'text', v: 'Obrigado pela preferência!', align: 'center' },
+    { t: 'feed', n: 2 },
+    { t: 'cut' }
+  )
+  return { lines }
+}

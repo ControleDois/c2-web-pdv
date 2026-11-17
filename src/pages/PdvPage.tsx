@@ -10,6 +10,8 @@ import { CashRegisterPage } from './CashRegisterPage'
 import { TerminalPickerPage } from './TerminalPickerPage'
 import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
+import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
+import { createPrintJob, type PrintDocument } from '../lib/printing'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
@@ -141,6 +143,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [tablePreview, setTablePreview] = useState<{ title: string; documents: PrintDocument[] } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -283,8 +286,29 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     exitTable()
   }
 
+  // Mesa: impressora de comprovante do terminal; sem impressora vinculada, abre a prévia
+  // para imprimir pelo navegador.
+  async function printTableDocument(title: string, document: PrintDocument) {
+    if (printers.receiptPrinterId) {
+      await createPrintJob(session.token.token, { company_id: company.id, printer_id: printers.receiptPrinterId, title, payload: document })
+      return
+    }
+    setTablePreview((current) => (current ? { ...current, documents: [...current.documents, document] } : { title, documents: [document] }))
+  }
+
+  const tablePreviewModal = (
+    <PrintPreviewModal
+      open={tablePreview !== null}
+      title={tablePreview?.title ?? ''}
+      documents={tablePreview?.documents ?? []}
+      onClose={() => setTablePreview(null)}
+    />
+  )
+
   if (selectedTable) {
     return (
+      <>
+      {tablePreviewModal}
       <TableDetail
         table={selectedTable}
         authorId={myPerson?.id ?? ''}
@@ -294,7 +318,12 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         onAdvanceDeliveryStatus={handleAdvanceDeliveryStatus}
         onLoadIfoodCancellationReasons={handleLoadIfoodCancellationReasons}
         onCancelIfoodOrder={handleCancelIfoodOrder}
+        onPrint={printTableDocument}
+        companyName={company.people?.name || 'Controle Dois'}
+        companyDocument={company.people?.document}
+        acquirerStorageKey={`c2_pdv_card_acquirer_${company.id}`}
       />
+      </>
     )
   }
 
@@ -314,6 +343,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
 
   return (
     <div className="flex h-full flex-col md:flex-row">
+      {tablePreviewModal}
       <Sidebar
         screen={screen}
         onNavigate={setScreen}
