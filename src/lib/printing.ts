@@ -271,15 +271,18 @@ export function buildTableBillDocument(data: {
   payments?: { name: string; amount: number }[]
   change?: number
   date?: string
+  // Cliente da mesa / dados da entrega (sai logo abaixo do título)
+  customer?: string[]
 }): PrintDocument {
   const receipt = Boolean(data.payments?.length)
   const lines: PrintLine[] = [{ t: 'text', v: data.companyName, align: 'center', bold: true }]
   if (data.companyDocument) lines.push({ t: 'text', v: formatDocument(data.companyDocument), align: 'center' })
   lines.push(
     { t: 'text', v: receipt ? `RECEBIMENTO · ${data.label}` : `CONFERÊNCIA DE CONTA · ${data.label}`, align: 'center', bold: true },
-    { t: 'text', v: dateTime(data.date ?? new Date().toISOString(), false), align: 'center' },
-    { t: 'hr' }
+    { t: 'text', v: dateTime(data.date ?? new Date().toISOString(), false), align: 'center' }
   )
+  for (const line of data.customer ?? []) if (line) lines.push({ t: 'text', v: line, align: 'center' })
+  lines.push({ t: 'hr' })
   for (const item of data.items) {
     lines.push({ t: 'row', l: `${quantity(item.quantity)}x ${item.name}`, r: money(item.total) })
   }

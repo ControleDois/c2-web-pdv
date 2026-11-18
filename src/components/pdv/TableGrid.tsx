@@ -15,6 +15,7 @@ interface TableGridProps {
   idleAlertMinutes: number
   // Mesas com pedido novo ainda não visto pelo caixa
   alertTableIds?: string[]
+  onNewDelivery?: () => void
 }
 
 type Filter = 'all' | 'tables' | 'delivery' | 'bill' | 'idle'
@@ -24,7 +25,7 @@ const BILL_REQUESTED = 'CONTA SOLICITADA'
 function tableTotal(table: FoodTable) {
   const items = activeItems(table).reduce((sum, item) => sum + item.sub_total, 0)
   const received = table.partials.reduce((sum, partial) => sum + partial.received, 0)
-  return Math.max(0, items + (table.delivery_order?.delivery_fee ?? 0) - received)
+  return Math.max(0, items + (table.delivery_order?.delivery_fee ?? table.delivery_fee ?? 0) - received)
 }
 
 // Pediu a conta (garçom) e não lançou nada depois.
@@ -48,7 +49,7 @@ function elapsed(iso: string | null | undefined, now: number) {
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
 }
 
-export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale, idleAlertMinutes, alertTableIds = [] }: TableGridProps) {
+export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale, idleAlertMinutes, alertTableIds = [], onNewDelivery }: TableGridProps) {
   const [filter, setFilter] = useState<Filter>('all')
   const [now, setNow] = useState(() => Date.now())
 
@@ -110,6 +111,16 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
           </span>
           <span className="text-[17px] font-bold text-[var(--ink)]">{formatCurrency(openTotal)}</span>
         </div>
+        {onNewDelivery && (
+          <button
+            type="button"
+            onClick={onNewDelivery}
+            className="flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-[13.5px] font-bold text-white shadow-[var(--card-shadow)] hover:bg-violet-700"
+          >
+            <TruckIcon className="h-4 w-4" />
+            Novo delivery
+          </button>
+        )}
         <div className="ml-auto flex gap-2 md:hidden">
           {onOpenQuickSale && (
             <button
@@ -191,6 +202,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
               badge = 'bg-violet-100 text-violet-700'
               Icon = TruckIcon
               caption = 'Delivery'
+              if (table.kind === 'delivery' && table.number > 9000) label = String(table.number - 9000)
             }
             if (bill) accent = 'bg-[var(--amber-500)]'
             if (idle) accent = 'bg-[var(--red-500)]'
@@ -218,6 +230,9 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold tracking-wide text-[var(--muted)] uppercase">{caption}</p>
                     <p className="truncate text-[26px] font-bold leading-tight text-[var(--ink)]">{label}</p>
+                    {table.customer_name && (
+                      <p className="truncate text-[13px] font-bold text-[var(--blue-700)]">{table.customer_name}</p>
+                    )}
                   </div>
                   <span className={`flex h-8 w-8 flex-none items-center justify-center rounded-xl ${badge}`}>
                     <Icon className="h-4 w-4" />

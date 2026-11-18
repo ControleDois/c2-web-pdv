@@ -8,6 +8,7 @@ import { ApiError } from '../../lib/api'
 import { filterProductBy } from '../../lib/db'
 import type { FoodMenu, MenuProduct } from '../../lib/foodMenu'
 import { ItemOptionsModal, Stepper, type ItemChoice } from './ItemOptionsModal'
+import { TableInfoModal, type TableInfo } from './TableInfoModal'
 import { formatCurrency } from '../../lib/format'
 import { ChevronLeftIcon, ClockIcon, CopyIcon, PrinterIcon, SearchIcon, TrashIcon, XCircleIcon } from '../icons'
 
@@ -159,6 +160,7 @@ export function TableDetail({
 
   const [receiveTotalOpen, setReceiveTotalOpen] = useState(false)
   const [printNotice, setPrintNotice] = useState<string | null>(null)
+  const [infoOpen, setInfoOpen] = useState(false)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -214,7 +216,7 @@ export function TableDetail({
   const items = activeItems(table)
   const subtotal = items.reduce((sum, item) => sum + item.sub_total, 0)
   const partialTotal = table.partials.reduce((sum, partial) => sum + partial.received, 0)
-  const deliveryFee = table.delivery_order?.delivery_fee ?? 0
+  const deliveryFee = table.delivery_order?.delivery_fee ?? table.delivery_fee ?? 0
   const receiveTotal = Math.max(0, subtotal + deliveryFee - partialTotal)
   const delivery = isDeliveryTable(table)
   const ifood = isIfoodOrder(table)
@@ -441,7 +443,35 @@ export function TableDetail({
     onBack()
   }
 
-  const tableLabel = delivery ? `Delivery ${table.number}` : `Mesa ${table.number}`
+  const tableLabel = delivery
+    ? `Delivery ${table.kind === 'delivery' && table.number > 9000 ? table.number - 9000 : table.number}`
+    : `Mesa ${table.number}`
+  const manualDelivery = table.kind === 'delivery' && !table.delivery_order
+  // Cliente e entrega no papel da conta/recibo.
+  const customerLines = [
+    table.customer_name ? `Cliente: ${table.customer_name}` : '',
+    table.customer_phone ? `Tel: ${table.customer_phone}` : '',
+    manualDelivery && table.delivery_address ? `Entrega: ${table.delivery_address}` : '',
+  ].filter(Boolean)
+
+  function saveInfo(info: TableInfo) {
+    const next: FoodTable = {
+      ...table,
+      customer_name: info.customer_name || null,
+      audit: [...table.audit],
+      ...(manualDelivery
+        ? { customer_phone: info.customer_phone || null, delivery_address: info.delivery_address || null, delivery_fee: info.delivery_fee }
+        : {}),
+    }
+    if ((info.customer_name || '') !== (table.customer_name || '')) {
+      pushAudit(next, info.customer_name ? `IDENTIFICOU ${delivery ? 'O DELIVERY' : 'A MESA'}: ${info.customer_name}` : 'TIROU O NOME DA MESA', 'default')
+    }
+    if (manualDelivery && (info.delivery_fee !== (table.delivery_fee ?? 0) || info.delivery_address !== (table.delivery_address ?? ''))) {
+      pushAudit(next, `ALTEROU DADOS DA ENTREGA (taxa ${formatCurrency(info.delivery_fee)})`, 'default')
+    }
+    setInfoOpen(false)
+    onSave(next)
+  }
   const heldItems = items.filter((item) => item.print_hold)
 
   function printItems() {
@@ -488,6 +518,7 @@ export function TableDetail({
         companyName,
         companyDocument,
         label: tableLabel,
+        customer: customerLines,
         items: printItems(),
         subtotal,
         deliveryFee,
@@ -560,6 +591,7 @@ export function TableDetail({
         companyName,
         companyDocument,
         label: tableLabel,
+        customer: customerLines,
         items: printItems(),
         subtotal,
         deliveryFee,
@@ -608,6 +640,7 @@ export function TableDetail({
         companyName,
         companyDocument,
         label: `${tableLabel} (parcial)`,
+        customer: customerLines,
         items: chosenToPay.map((item) => ({ name: item.name, quantity: item.quantity, total: item.sub_total, observation: item.observation })),
         subtotal: chosenTotal,
         total: chosenTotal,
@@ -946,7 +979,7 @@ export function TableDetail({
             className="flex items-center justify-center gap-1 rounded-xl border border-[var(--red-100)] py-2.5 text-[12.5px] font-semibold text-[var(--red-500)] disabled:opacity-40"
           >
             <XCircleIcon className="h-3.5 w-3.5" />
-            {ifood ? 'Cancelar pedido' : 'Cancelar mesa'}
+            {ifood ? 'Cancelar pedido' : delivery ? 'Cancelar delivery' : 'Cancelar mesa'}
           </button>
         </div>
         <button
@@ -985,7 +1018,20 @@ export function TableDetail({
           Salão
         </button>
         <div className="min-w-0 text-center">
-          <p className="truncate text-[16px] font-bold text-[var(--ink)]">{tableLabel}</p>
+          <button
+            type="button"
+            onClick={() => setInfoOpen(true)}
+            title={delivery ? 'Dados do cliente e da entrega' : 'Colocar o nome do cliente'}
+            className="group mx-auto flex max-w-full items-center gap-1.5 rounded-lg px-2 hover:bg-[var(--page)]"
+          >
+            <span className="truncate text-[16px] font-bold text-[var(--ink)]">
+              {tableLabel}
+              {table.customer_name ? <span className="text-[var(--blue-700)]"> · {table.customer_name}</span> : null}
+            </span>
+            <span className="flex-none rounded-md bg-[var(--blue-100)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--blue-700)]">
+              {table.customer_name ? 'editar' : '+ nome'}
+            </span>
+          </button>
           <p className="flex flex-wrap items-center justify-center gap-x-2 text-[11.5px] text-[var(--muted)]">
             <span className="flex items-center gap-1">
               <ClockIcon className="h-3 w-3" />
@@ -1002,6 +1048,20 @@ export function TableDetail({
         </div>
         <p className="min-w-[72px] text-right text-[15px] font-bold text-[var(--ink)]">{formatCurrency(receiveTotal)}</p>
       </div>
+
+      {manualDelivery && (
+        <button
+          type="button"
+          onClick={() => setInfoOpen(true)}
+          className="flex flex-none items-center justify-between gap-3 bg-violet-100 px-4 py-2 text-left text-violet-800 hover:bg-violet-200/70"
+        >
+          <span className="min-w-0 text-[12.5px]">
+            <b>Entrega:</b> {table.delivery_address || 'sem endereço'}
+            {table.customer_phone ? ` · ${table.customer_phone.replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3')}` : ''}
+          </span>
+          <span className="flex-none text-[12px] font-bold">Taxa {formatCurrency(table.delivery_fee ?? 0)} · editar</span>
+        </button>
+      )}
 
       {delivery && table.delivery_order && (
         <div className="flex flex-none flex-col">
@@ -1128,6 +1188,21 @@ export function TableDetail({
         onClose={() => setReceiveItemsOpen(false)}
         onConfirm={(lines, change) => void confirmReceiveItems(lines, change)}
       />
+
+      {infoOpen && (
+        <TableInfoModal
+          delivery={manualDelivery}
+          title={manualDelivery ? `Dados do ${tableLabel}` : `Identificar ${tableLabel}`}
+          initial={{
+            customer_name: table.customer_name ?? '',
+            customer_phone: table.customer_phone ?? '',
+            delivery_address: table.delivery_address ?? '',
+            delivery_fee: table.delivery_fee ?? 0,
+          }}
+          onClose={() => setInfoOpen(false)}
+          onConfirm={saveInfo}
+        />
+      )}
 
       {optionsFor && <ItemOptionsModal product={optionsFor.product} onClose={() => setOptionsFor(null)} onConfirm={confirmOptions} />}
 

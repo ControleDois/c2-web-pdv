@@ -14,6 +14,7 @@ import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { createPrintJob, reprintProductionOrder, type PrintDocument } from '../lib/printing'
 import { fetchFoodMenu, loadCachedMenu, type FoodMenu } from '../lib/foodMenu'
 import { NewOrderAlert, type TableOrderAlert } from '../components/pdv/NewOrderAlert'
+import { TableInfoModal, type TableInfo } from '../components/pdv/TableInfoModal'
 import { orderChime } from '../lib/beep'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
@@ -179,6 +180,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [newDeliveryOpen, setNewDeliveryOpen] = useState(false)
   const [tablePreview, setTablePreview] = useState<{ title: string; documents: PrintDocument[] } | null>(null)
   // Cardápio das mesas (com adicionais): abre com a cópia do aparelho e atualiza do servidor.
   const [foodMenu, setFoodMenu] = useState<FoodMenu | null>(() => loadCachedMenu(company.id))
@@ -245,6 +247,11 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
       return
     }
 
+    openNewTable(number)
+    setTableSearch('')
+  }
+
+  function openNewTable(number: number, extra: Partial<FoodTable> = {}, openingText = `ABERTURA DA MESA ${number}`) {
     const now = new Date().toISOString()
     const table: FoodTable = {
       id: newLocalId(),
@@ -263,6 +270,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
       orders: [],
       partials: [],
       sales: [],
+      ...extra,
       audit: [
         {
           id: newLocalId(),
@@ -273,7 +281,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
           updatedAt: now,
           deletedAt: null,
           moment: now,
-          description: `ABERTURA DA MESA ${number}`,
+          description: openingText,
           reason: '',
           author: myPerson?.id ?? '',
           author_name: myPerson?.name ?? '',
@@ -284,7 +292,25 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     }
 
     saveTable(table).then(() => enterTable(table))
-    setTableSearch('')
+  }
+
+  // Delivery lançado no PDV (cliente sem app de delivery): numeração própria a partir de 9001.
+  function createManualDelivery(info: TableInfo) {
+    const used = new Set(tables.filter((table) => table.status !== 'closed' && table.status !== 'canceled').map((table) => table.number))
+    let number = 9001
+    while (used.has(number) && number < 9999) number++
+    setNewDeliveryOpen(false)
+    openNewTable(
+      number,
+      {
+        kind: 'delivery',
+        customer_name: info.customer_name || null,
+        customer_phone: info.customer_phone || null,
+        delivery_address: info.delivery_address || null,
+        delivery_fee: info.delivery_fee,
+      },
+      `NOVO DELIVERY ${number - 9000}${info.customer_name ? ` - ${info.customer_name}` : ''}`
+    )
   }
 
   function enterTable(table: FoodTable) {
@@ -425,6 +451,15 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     <div className="flex h-full flex-col md:flex-row">
       {tablePreviewModal}
       {orderAlertBanner}
+      {newDeliveryOpen && (
+        <TableInfoModal
+          delivery
+          title="Novo delivery"
+          confirmLabel="Criar e lançar itens"
+          onClose={() => setNewDeliveryOpen(false)}
+          onConfirm={createManualDelivery}
+        />
+      )}
       <Sidebar
         screen={screen}
         onNavigate={setScreen}
@@ -527,6 +562,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onSelect={enterTable}
             idleAlertMinutes={idleAlertMinutes}
             alertTableIds={orderAlerts.map((alert) => alert.tableId)}
+            onNewDelivery={() => setNewDeliveryOpen(true)}
             onOpenSettings={() => setScreen('settings')}
             onOpenQuickSale={quickSaleEnabled ? () => setScreen('quick-sale') : undefined}
           />

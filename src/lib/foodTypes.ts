@@ -133,12 +133,20 @@ export interface FoodTable extends FoodBaseLocal {
   sales: FoodTableSale[]
   audit: FoodAudit[]
   delivery_order?: FoodTableDeliveryOrder | null
+  // 'delivery' = delivery lançado no PDV (sem app de delivery)
+  kind?: 'table' | 'delivery'
+  // Nome do cliente para identificar a mesa; no delivery, também telefone, endereço e taxa
+  customer_name?: string | null
+  customer_phone?: string | null
+  delivery_address?: string | null
+  delivery_fee?: number
 }
 
 export const DELIVERY_TABLE_MIN = 9000
 export const DELIVERY_TABLE_MAX = 9999
 
 export function isDeliveryTable(table: FoodTable): boolean {
+  if (table.kind === 'delivery') return true
   return Boolean(table.delivery_order) || (table.number >= DELIVERY_TABLE_MIN && table.number <= DELIVERY_TABLE_MAX)
 }
 

@@ -11,6 +11,11 @@ export interface FoodSyncPayload {
   status: string
   opened_at: string
   closed_at: string | null
+  kind?: 'table' | 'delivery'
+  customer_name?: string | null
+  customer_phone?: string | null
+  delivery_address?: string | null
+  delivery_fee?: number
   items: unknown[]
   orders: unknown[]
   partials: unknown[]
@@ -95,6 +100,11 @@ export function normalizeRemoteTable(raw: any): FoodTable {
     opened_at: raw.opened_at || new Date().toISOString(),
     closed_at: raw.closed_at || null,
     last_order_at: raw.last_order_at || null,
+    kind: raw.kind === 'delivery' ? 'delivery' : 'table',
+    customer_name: raw.customer_name || null,
+    customer_phone: raw.customer_phone || null,
+    delivery_address: raw.delivery_address || null,
+    delivery_fee: Number(raw.delivery_fee || 0),
     items,
     orders: (raw.orders || []).map((order: any) => ({
       id: order.id,
