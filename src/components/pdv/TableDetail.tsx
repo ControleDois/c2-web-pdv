@@ -632,6 +632,9 @@ export function TableDetail({
   const chosenToPay = payItems ? payableItems.filter((item) => payItems.includes(item.id)) : []
   const chosenTotal = Math.round(chosenToPay.reduce((sum, item) => sum + item.sub_total, 0) * 100) / 100
 
+  // Algum produto com foto: os sem foto ganham a inicial no lugar, para os cartões ficarem iguais.
+  const withPhotos = visibleProducts.some((product) => product.image_url)
+
   const menuPanel = (
     <section className={`${mobileView === 'menu' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
       <div className="flex-none space-y-2.5 p-3 sm:p-4">
@@ -694,16 +697,27 @@ export function TableDetail({
                 key={product.id}
                 type="button"
                 onClick={() => pickProduct(product, term ? typedQuantity : 1)}
-                className={`group flex min-h-[88px] flex-col justify-between rounded-2xl bg-[var(--surface)] p-3 text-left shadow-[var(--card-shadow)] ring-1 transition hover:-translate-y-0.5 hover:ring-[var(--blue-300)] active:scale-[0.98] ${
+                className={`group flex min-h-[88px] flex-col overflow-hidden rounded-2xl bg-[var(--surface)] text-left shadow-[var(--card-shadow)] ring-1 transition hover:-translate-y-0.5 hover:ring-[var(--blue-300)] active:scale-[0.98] ${
                   term && index === 0 ? 'ring-[var(--blue-500)]' : 'ring-transparent'
                 }`}
               >
+                {product.image_url ? (
+                  <img src={product.image_url} alt="" loading="lazy" className="aspect-[4/3] w-full flex-none bg-[var(--page)] object-cover" />
+                ) : (
+                  withPhotos && (
+                    <span className="flex aspect-[4/3] w-full flex-none items-center justify-center bg-[var(--blue-100)] text-[34px] font-bold text-[var(--blue-700)]">
+                      {product.name.trim().charAt(0).toUpperCase()}
+                    </span>
+                  )
+                )}
+                <span className="flex flex-1 flex-col justify-between p-3">
                 <span className="line-clamp-2 text-[13.5px] font-bold leading-snug text-[var(--ink)]">{product.name}</span>
                 <span className="mt-2 flex items-end justify-between gap-1">
                   <span className="text-[13.5px] font-bold text-[var(--blue-700)]">{formatCurrency(Number(product.sale_value || 0))}</span>
                   {product.complements.length > 0 && (
                     <span className="rounded-full bg-[var(--amber-100)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--amber-500)]">adicionais</span>
                   )}
+                </span>
                 </span>
               </button>
             ))}

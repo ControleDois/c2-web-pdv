@@ -81,7 +81,8 @@ export function ItemOptionsModal({ product, onClose, onConfirm }: Props) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
-          <div className="min-w-0">
+          {product.image_url && <img src={product.image_url} alt="" className="h-20 w-20 flex-none rounded-xl object-cover" />}
+          <div className="min-w-0 flex-1">
             <p className="text-[17px] font-bold leading-snug text-[var(--ink)]">{product.name}</p>
             {product.description && <p className="mt-0.5 line-clamp-2 text-[12.5px] text-[var(--muted)]">{product.description}</p>}
             <p className="mt-1 text-[14px] font-bold text-[var(--blue-700)]">{formatCurrency(Number(product.sale_value || 0))}</p>
