@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAllTables, putTable, deleteTable } from '../lib/db'
 import { syncTable, pullTables, normalizeRemoteTable, type FoodSyncPayload } from '../lib/foodApi'
 import { connectSocket, getSocketId } from '../lib/socket'
-import type { FoodTable } from '../lib/foodTypes'
+import type { FoodTable, FoodTableItem } from '../lib/foodTypes'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
 const SYNC_INTERVAL_MS = 10000
 
-export function useFoodTables(session: AuthSession, company: AuthCompany) {
+// Itens novos que chegaram de outro aparelho (garçom, cardápio, iFood) - o PDV toca e destaca a mesa.
+export type NewItemsListener = (table: FoodTable, items: FoodTableItem[]) => void
+
+export function useFoodTables(session: AuthSession, company: AuthCompany, onNewItems?: NewItemsListener) {
+  const onNewItemsRef = useRef(onNewItems)
+  onNewItemsRef.current = onNewItems
   const [tables, setTables] = useState<FoodTable[]>([])
   const selectedTableIdRef = useRef<string | null>(null)
   const syncingRef = useRef(false)
@@ -75,6 +80,7 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
         if (holding && table.id === selectedTableIdRef.current) continue
         const payload: FoodSyncPayload = {
           device_id: getSocketId() || '',
+          source: 'pdv',
           id: table.id,
           companyId: company.id,
           number: table.number,
@@ -121,16 +127,36 @@ export function useFoodTables(session: AuthSession, company: AuthCompany) {
   useEffect(() => {
     const socket = connectSocket(company.id)
 
-    function handleTableUpdated(payload: { table?: unknown; sourceDeviceId?: string }) {
+    function handleTableUpdated(payload: { table?: unknown; sourceDeviceId?: string; source?: string | null }) {
       if (!payload?.table) return
       if (payload.sourceDeviceId && payload.sourceDeviceId === getSocketId()) return
 
       const remote = normalizeRemoteTable(payload.table)
-      // Mesa aberta na tela no momento: ignora, sem merge (mesmo
-      // comportamento do Angular — evita sobrescrever edição em andamento).
-      if (selectedTableIdRef.current === remote.id) return
+      void getAllTables().then((current) => {
+        const local = current.find((table) => table.id === remote.id)
+        const known = new Set((local?.items ?? []).map((item) => item.id))
+        const arrived = remote.items.filter((item) => !item.removed && !known.has(item.id))
+        const open = remote.status !== 'closed' && remote.status !== 'canceled'
+        if (arrived.length > 0 && open && payload.source !== 'pdv') onNewItemsRef.current?.(remote, arrived)
 
-      putTable(remote).then(reloadFromDb)
+        // Mesa aberta na tela no momento: ignora, sem merge (mesmo
+        // comportamento do Angular — evita sobrescrever edição em andamento).
+        // Os itens que chegaram de outro aparelho entram na tela sem mexer no resto.
+        if (selectedTableIdRef.current === remote.id) {
+          if (local && arrived.length > 0) {
+            const knownOrders = new Set(local.orders.map((order) => order.id))
+            void putTable({
+              ...local,
+              items: [...local.items, ...arrived],
+              orders: [...local.orders, ...remote.orders.filter((order) => !knownOrders.has(order.id))],
+              audit: [...local.audit, ...remote.audit.filter((entry) => !local.audit.some((mine) => mine.id === entry.id))],
+              status: 'open_with_items',
+            }).then(reloadFromDb)
+          }
+          return
+        }
+        putTable(remote).then(reloadFromDb)
+      })
     }
 
     socket.on('food:table:updated', handleTableUpdated)

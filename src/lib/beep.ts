@@ -31,3 +31,30 @@ export function beep(kind: 'ok' | 'error') {
     // sem áudio: segue só com o aviso visual
   }
 }
+
+// Campainha de pedido novo (como a do iFood): três toques fortes, para o caixa ouvir de longe.
+export function orderChime() {
+  try {
+    context = context ?? new AudioContext()
+    if (context.state === 'suspended') void context.resume()
+    const loud = (frequency: number, start: number, duration: number) => {
+      if (!context) return
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = 'triangle'
+      oscillator.frequency.value = frequency
+      gain.gain.setValueAtTime(0.0001, context.currentTime + start)
+      gain.gain.exponentialRampToValueAtTime(0.6, context.currentTime + start + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + start + duration)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(context.currentTime + start)
+      oscillator.stop(context.currentTime + start + duration + 0.02)
+    }
+    loud(988, 0, 0.35)
+    loud(1319, 0.38, 0.35)
+    loud(1568, 0.76, 0.6)
+  } catch {
+    // sem áudio: fica só o destaque na tela
+  }
+}

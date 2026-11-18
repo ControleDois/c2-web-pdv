@@ -13,6 +13,8 @@ import { TableDetail } from '../components/pdv/TableDetail'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { createPrintJob, reprintProductionOrder, type PrintDocument } from '../lib/printing'
 import { fetchFoodMenu, loadCachedMenu, type FoodMenu } from '../lib/foodMenu'
+import { NewOrderAlert, type TableOrderAlert } from '../components/pdv/NewOrderAlert'
+import { orderChime } from '../lib/beep'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
@@ -28,7 +30,7 @@ import {
   type CompanyTerminalOption,
   type PdvPrinters,
 } from '../lib/terminal'
-import type { FoodTable } from '../lib/foodTypes'
+import type { FoodTable, FoodTableItem } from '../lib/foodTypes'
 import type { AuthCompany, AuthSession } from '../lib/auth'
 
 // Sentinela salvo quando o operador escolhe "continuar sem terminal" - some
@@ -140,7 +142,40 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     if (quickSaleOnlyMode && screen === 'tables') setScreen('quick-sale')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickSaleOnlyMode])
-  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer, syncNow } = useFoodTables(session, company)
+  // Pedido novo vindo de outro aparelho (garçom, cardápio, iFood): toca até o caixa ver e destaca a mesa.
+  const [orderAlerts, setOrderAlerts] = useState<TableOrderAlert[]>([])
+  const handleNewItems = (table: FoodTable, items: FoodTableItem[]) => {
+    const label = isIfoodOrder(table)
+      ? `iFood ${table.delivery_order?.external_display_id || table.number}`
+      : table.delivery_order || table.number >= 9000
+        ? `Delivery ${table.number}`
+        : `Mesa ${table.number}`
+    setOrderAlerts((current) => {
+      const existing = current.find((alert) => alert.tableId === table.id)
+      const merged = [...(existing?.items ?? []), ...items.map((item) => ({ name: item.name, quantity: item.quantity }))]
+      const total = (existing?.total ?? 0) + items.reduce((sum, item) => sum + (item.sub_total || item.total || 0), 0)
+      return [{ tableId: table.id, label, items: merged, total, at: Date.now() }, ...current.filter((alert) => alert.tableId !== table.id)]
+    })
+    orderChime()
+  }
+  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer, syncNow } = useFoodTables(session, company, handleNewItems)
+
+  // Toca de novo a cada 6 segundos e pisca o título da aba até o caixa dar ciente ou abrir a mesa.
+  useEffect(() => {
+    if (orderAlerts.length === 0) return
+    const ring = setInterval(() => orderChime(), 6000)
+    const original = document.title
+    let flip = false
+    const title = setInterval(() => {
+      flip = !flip
+      document.title = flip ? `🔔 (${orderAlerts.length}) Novo pedido!` : original
+    }, 1000)
+    return () => {
+      clearInterval(ring)
+      clearInterval(title)
+      document.title = original
+    }
+  }, [orderAlerts.length])
   const myPerson = useMyCompanyPerson(session, company)
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -253,6 +288,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   }
 
   function enterTable(table: FoodTable) {
+    setOrderAlerts((current) => current.filter((alert) => alert.tableId !== table.id))
     void refreshFoodMenu()
     setSelectedId(table.id)
     setSelectedTableId(table.id)
@@ -320,6 +356,21 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     setTablePreview((current) => (current ? { ...current, documents: [...current.documents, document] } : { title, documents: [document] }))
   }
 
+  const orderAlertBanner = (
+    <NewOrderAlert
+      alerts={orderAlerts}
+      onDismiss={() => setOrderAlerts([])}
+      onOpen={(tableId) => {
+        const table = tables.find((item) => item.id === tableId)
+        setOrderAlerts((current) => current.filter((alert) => alert.tableId !== tableId))
+        if (!table) return
+        if (selectedId && selectedId !== tableId) exitTable()
+        setScreen('tables')
+        enterTable(table)
+      }}
+    />
+  )
+
   const tablePreviewModal = (
     <PrintPreviewModal
       open={tablePreview !== null}
@@ -333,6 +384,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     return (
       <>
       {tablePreviewModal}
+      {orderAlertBanner}
       <TableDetail
         table={selectedTable}
         authorId={myPerson?.id ?? ''}
@@ -372,6 +424,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   return (
     <div className="flex h-full flex-col md:flex-row">
       {tablePreviewModal}
+      {orderAlertBanner}
       <Sidebar
         screen={screen}
         onNavigate={setScreen}
@@ -473,6 +526,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onSubmit={handleTableInputSubmit}
             onSelect={enterTable}
             idleAlertMinutes={idleAlertMinutes}
+            alertTableIds={orderAlerts.map((alert) => alert.tableId)}
             onOpenSettings={() => setScreen('settings')}
             onOpenQuickSale={quickSaleEnabled ? () => setScreen('quick-sale') : undefined}
           />

@@ -229,3 +229,22 @@ body {
     min-height: calc(100dvh / var(--ui-zoom));
   }
 }
+
+/* Pedido novo nas mesas: faixa que pulsa, sino balançando e mesa piscando no salão. */
+@keyframes new-order-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  50% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+}
+.new-order-alert { animation: new-order-pulse 1.4s ease-in-out infinite; }
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(18deg); }
+  30% { transform: rotate(-16deg); }
+  45% { transform: rotate(10deg); }
+  60% { transform: rotate(-6deg); }
+}
+.bell { display: inline-block; animation: bell-ring 1.2s ease-in-out infinite; transform-origin: top center; }
+.table-new-order { animation: new-order-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .new-order-alert, .bell, .table-new-order { animation: none; }
+}

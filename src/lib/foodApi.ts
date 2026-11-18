@@ -3,6 +3,8 @@ import type { FoodTable } from './foodTypes'
 
 export interface FoodSyncPayload {
   device_id: string
+  // Quem mandou (o PDV não toca a campainha para o que veio de outro caixa)
+  source?: 'pdv'
   id: string
   companyId: string
   number: number

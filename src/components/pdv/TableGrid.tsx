@@ -13,6 +13,8 @@ interface TableGridProps {
   onOpenSettings: () => void
   onOpenQuickSale?: () => void
   idleAlertMinutes: number
+  // Mesas com pedido novo ainda não visto pelo caixa
+  alertTableIds?: string[]
 }
 
 type Filter = 'all' | 'tables' | 'delivery' | 'bill' | 'idle'
@@ -46,7 +48,7 @@ function elapsed(iso: string | null | undefined, now: number) {
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
 }
 
-export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale, idleAlertMinutes }: TableGridProps) {
+export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale, idleAlertMinutes, alertTableIds = [] }: TableGridProps) {
   const [filter, setFilter] = useState<Filter>('all')
   const [now, setNow] = useState(() => Date.now())
 
@@ -171,6 +173,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
             const unsent = items.some((item) => item.print_hold)
             const time = elapsed(table.opened_at, now)
             const idle = idleMinutes(table, idleAlertMinutes, now)
+            const fresh = alertTableIds.includes(table.id)
 
             let accent = 'bg-[var(--blue-500)]'
             let badge = 'bg-[var(--blue-100)] text-[var(--blue-700)]'
@@ -191,6 +194,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
             }
             if (bill) accent = 'bg-[var(--amber-500)]'
             if (idle) accent = 'bg-[var(--red-500)]'
+            if (fresh) accent = 'bg-[var(--red-500)]'
             if (items.length === 0) accent = 'bg-[var(--border)]'
 
             return (
@@ -198,8 +202,17 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
                 key={table.id}
                 type="button"
                 onClick={() => onSelect(table)}
-                className="relative flex min-h-[124px] flex-col overflow-hidden rounded-2xl bg-[var(--surface)] p-3.5 pt-4 text-left shadow-[var(--card-shadow)] ring-1 ring-transparent transition hover:-translate-y-0.5 hover:ring-[var(--blue-300)]"
+                className={`relative flex min-h-[124px] flex-col overflow-hidden rounded-2xl p-3.5 pt-4 text-left shadow-[var(--card-shadow)] transition hover:-translate-y-0.5 ${
+                  fresh
+                    ? 'table-new-order bg-[var(--red-100)] ring-2 ring-[var(--red-500)]'
+                    : 'bg-[var(--surface)] ring-1 ring-transparent hover:ring-[var(--blue-300)]'
+                }`}
               >
+                {fresh && (
+                  <span className="absolute top-2 right-2 z-10 rounded-full bg-[var(--red-500)] px-2 py-0.5 text-[10.5px] font-bold text-white">
+                    🔔 PEDIDO NOVO
+                  </span>
+                )}
                 <span className={`absolute inset-x-0 top-0 h-1 ${accent}`} />
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
