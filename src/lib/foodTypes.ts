@@ -32,6 +32,8 @@ export interface FoodTableItem extends FoodBaseLocal {
   print_hold?: boolean
   // Pedido (lançamento) a que o item pertence: o servidor liga um ao outro por este id.
   food_order_id?: string
+  // Pago num recebimento por itens (a mesa continua aberta com o resto).
+  is_received?: boolean
   observation?: string
   author: string
   author_name: string

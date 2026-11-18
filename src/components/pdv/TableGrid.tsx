@@ -12,9 +12,10 @@ interface TableGridProps {
   onSelect: (table: FoodTable) => void
   onOpenSettings: () => void
   onOpenQuickSale?: () => void
+  idleAlertMinutes: number
 }
 
-type Filter = 'all' | 'tables' | 'delivery' | 'bill'
+type Filter = 'all' | 'tables' | 'delivery' | 'bill' | 'idle'
 
 const BILL_REQUESTED = 'CONTA SOLICITADA'
 
@@ -30,6 +31,14 @@ function billRequested(table: FoodTable) {
   return last?.description === BILL_REQUESTED
 }
 
+function idleMinutes(table: FoodTable, limit: number, now: number): number | null {
+  const items = activeItems(table)
+  if (!limit || items.length === 0) return null
+  const last = items.map((item) => item.createdAt ?? '').filter(Boolean).sort().pop() ?? table.opened_at
+  const minutes = Math.floor((now - new Date(last).getTime()) / 60000)
+  return Number.isFinite(minutes) && minutes >= limit ? minutes : null
+}
+
 function elapsed(iso: string | null | undefined, now: number) {
   if (!iso) return ''
   const minutes = Math.floor((now - new Date(iso).getTime()) / 60000)
@@ -37,7 +46,7 @@ function elapsed(iso: string | null | undefined, now: number) {
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
 }
 
-export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale }: TableGridProps) {
+export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, onOpenSettings, onOpenQuickSale, idleAlertMinutes }: TableGridProps) {
   const [filter, setFilter] = useState<Filter>('all')
   const [now, setNow] = useState(() => Date.now())
 
@@ -54,11 +63,13 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
     tables: open.filter((table) => !isDeliveryTable(table)).length,
     delivery: open.filter((table) => isDeliveryTable(table)).length,
     bill: open.filter(billRequested).length,
+    idle: open.filter((table) => idleMinutes(table, idleAlertMinutes, now) !== null).length,
   }
   const visible = open.filter((table) => {
     if (filter === 'tables') return !isDeliveryTable(table)
     if (filter === 'delivery') return isDeliveryTable(table)
     if (filter === 'bill') return billRequested(table)
+    if (filter === 'idle') return idleMinutes(table, idleAlertMinutes, now) !== null
     return true
   })
   const openTotal = open.reduce((sum, table) => sum + tableTotal(table), 0)
@@ -68,6 +79,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
     { key: 'tables', label: 'Mesas' },
     { key: 'delivery', label: 'Delivery' },
     { key: 'bill', label: 'Pediram a conta' },
+    { key: 'idle', label: 'Sem pedir há muito tempo' },
   ]
 
   return (
@@ -158,6 +170,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
             const bill = billRequested(table)
             const unsent = items.some((item) => item.print_hold)
             const time = elapsed(table.opened_at, now)
+            const idle = idleMinutes(table, idleAlertMinutes, now)
 
             let accent = 'bg-[var(--blue-500)]'
             let badge = 'bg-[var(--blue-100)] text-[var(--blue-700)]'
@@ -177,6 +190,7 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
               caption = 'Delivery'
             }
             if (bill) accent = 'bg-[var(--amber-500)]'
+            if (idle) accent = 'bg-[var(--red-500)]'
             if (items.length === 0) accent = 'bg-[var(--border)]'
 
             return (
@@ -207,12 +221,17 @@ export function TableGrid({ tables, search, onSearchChange, onSubmit, onSelect, 
                     {time && (
                       <span className="flex items-center gap-0.5">
                         <ClockIcon className="h-3 w-3" />
-                        {time}
+                        {time} de casa
                       </span>
                     )}
                   </div>
-                  {(bill || unsent) && (
+                  {(bill || unsent || idle) && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
+                      {idle && (
+                        <span className="rounded-full bg-[var(--red-500)] px-2 py-0.5 text-[10.5px] font-bold text-white">
+                          ⚠ {idle < 60 ? `${idle} min` : `${Math.floor(idle / 60)}h${String(idle % 60).padStart(2, '0')}`} sem pedir
+                        </span>
+                      )}
                       {bill && <span className="rounded-full bg-[var(--amber-100)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--amber-500)]">Pediu a conta</span>}
                       {unsent && <span className="rounded-full bg-[var(--green-100)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--green-600)]">Pedido não enviado</span>}
                     </div>

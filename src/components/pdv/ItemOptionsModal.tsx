@@ -39,12 +39,18 @@ export function ItemOptionsModal({ product, onClose, onConfirm }: Props) {
     const option = group?.options.find((item) => item.id === optionId)
     if (!group || !option) return
     setError(null)
-    setChosen((current) => {
-      let list = current.filter((choice) => !(choice.complementId === complementId && choice.option.id === optionId))
-      if (single) list = list.filter((choice) => choice.complementId !== complementId)
-      if (next > 0) list.push({ complementId, option, quantity: next })
-      return list
-    })
+    const previous = qtyOf(complementId, optionId)
+    let list = chosen.filter((choice) => !(choice.complementId === complementId && choice.option.id === optionId))
+    if (single) list = list.filter((choice) => choice.complementId !== complementId)
+    if (next > 0) list.push({ complementId, option, quantity: next })
+    setChosen(list)
+    // Chegou no limite do grupo: rola sozinho para o próximo (ou para a observação).
+    const total = list.filter((choice) => choice.complementId === complementId).reduce((sum, choice) => sum + choice.quantity, 0)
+    if (next > previous && group.maximum > 0 && total >= group.maximum) {
+      const following = product.complements[product.complements.findIndex((item) => item.id === complementId) + 1]
+      const element = document.getElementById(following ? `pdv-grupo-${following.id}` : 'pdv-grupo-observacao')
+      if (element) setTimeout(() => element.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+    }
   }
 
   function confirm() {
@@ -97,7 +103,7 @@ export function ItemOptionsModal({ product, onClose, onConfirm }: Props) {
               .filter(Boolean)
               .join(' · ')
             return (
-              <section key={group.id} className="mb-4">
+              <section key={group.id} id={`pdv-grupo-${group.id}`} className="mb-4 scroll-mt-2">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-[13.5px] font-bold text-[var(--ink)]">{group.name}</p>
                   <span
@@ -149,7 +155,7 @@ export function ItemOptionsModal({ product, onClose, onConfirm }: Props) {
             )
           })}
 
-          <label className="flex flex-col gap-1.5">
+          <label id="pdv-grupo-observacao" className="flex scroll-mt-2 flex-col gap-1.5">
             <span className="text-[13.5px] font-bold text-[var(--ink)]">Observação</span>
             <textarea
               value={note}

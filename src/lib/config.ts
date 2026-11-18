@@ -2,6 +2,7 @@ import { apiPut } from './api'
 import type { ConfigRecord } from './auth'
 
 export interface QuickSaleConfigPayload {
+  food_table_idle_alert_minutes?: number
   quick_sale_enabled?: boolean
   quick_sale_only_mode?: boolean
   quick_sale_ask_print_preview?: boolean

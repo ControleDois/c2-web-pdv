@@ -68,9 +68,10 @@ export function normalizeRemoteTable(raw: any): FoodTable {
     selected: false,
     pending_print: Boolean(item.pending_print),
     food_order_id: item.food_order_id || undefined,
+    is_received: Boolean(item.is_received),
     observation: item.observation || undefined,
     author: item.user_id || '',
-    author_name: item.author_name || '',
+    author_name: item.user?.name || item.author_name || '',
   }))
 
   const activeItemsCount = items.filter((item: any) => !item.removed).length
@@ -151,8 +152,8 @@ export function normalizeRemoteTable(raw: any): FoodTable {
       description: audit.history || audit.description || '',
       reason: audit.reason || '',
       author: audit.user_id || '',
-      author_name: audit.author_name || '',
-      type: (audit.status || audit.type || 'default') as any,
+      author_name: audit.user?.name || audit.author_name || '',
+      type: (typeof audit.status === 'number' ? (['default', 'success', 'danger', 'warning'][audit.status] ?? 'default') : audit.type || 'default') as any,
       requested_by_client: Boolean(audit.requested_by_client),
     })),
     delivery_order: raw.delivery_order || null,

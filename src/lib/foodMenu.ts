@@ -38,6 +38,7 @@ export interface MenuCategory {
 }
 
 export interface FoodMenu {
+  idle_alert_minutes?: number
   categories: MenuCategory[]
   products: MenuProduct[]
 }
@@ -56,6 +57,7 @@ export function loadCachedMenu(companyId: string): FoodMenu | null {
 export async function fetchFoodMenu(token: string, companyId: string): Promise<FoodMenu> {
   const menu = await apiGet<FoodMenu>('/food/menu', { companyId }, token)
   const normalized: FoodMenu = {
+    idle_alert_minutes: menu.idle_alert_minutes,
     categories: menu.categories || [],
     products: (menu.products || []).map((product) => ({ ...product, complements: product.complements || [] })),
   }

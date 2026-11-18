@@ -30,6 +30,8 @@ interface TableDetailProps {
   acquirerStorageKey?: string
   // Cardápio (categorias, produtos e adicionais); null = ainda não baixou, busca no catálogo local.
   menu: FoodMenu | null
+  // Minutos sem pedir até a mesa entrar em alerta (0 = desligado)
+  idleAlertMinutes: number
 }
 
 
@@ -51,11 +53,28 @@ const normalizeText = (value: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
 
-function minutesSince(iso: string | null | undefined) {
-  if (!iso) return null
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (!Number.isFinite(diff) || diff < 0) return null
-  return diff < 60 ? `${diff} min` : `${Math.floor(diff / 60)}h${String(diff % 60).padStart(2, '0')}`
+function minutesBetween(iso: string | null | undefined, now: number) {
+  if (!iso) return 0
+  const diff = Math.floor((now - new Date(iso).getTime()) / 60000)
+  return Number.isFinite(diff) && diff > 0 ? diff : 0
+}
+
+const formatMinutes = (minutes: number) =>
+  minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
+
+const formatHour = (iso: string | null | undefined) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+}
+
+const firstName = (name: string | null | undefined) => (name ? name.trim().split(' ')[0] : '')
+
+const AUDIT_DOT: Record<string, string> = {
+  success: 'bg-[var(--green-600)]',
+  danger: 'bg-[var(--red-500)]',
+  warning: 'bg-[var(--amber-500)]',
+  default: 'bg-[var(--blue-500)]',
 }
 
 const DELIVERY_STATUS_LABELS: Record<string, string> = {
@@ -84,12 +103,40 @@ export function TableDetail({
   companyDocument,
   acquirerStorageKey,
   menu,
+  idleAlertMinutes,
 }: TableDetailProps) {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
   const [localMatches, setLocalMatches] = useState<MenuProduct[]>([])
   const [optionsFor, setOptionsFor] = useState<{ product: MenuProduct; quantity: number } | null>(null)
   const [mobileView, setMobileView] = useState<'menu' | 'comanda'>('menu')
+  const [comandaTab, setComandaTab] = useState<'itens' | 'historico'>('itens')
+  const [newestFirst, setNewestFirst] = useState(() => {
+    try {
+      return localStorage.getItem('c2_pdv_mesa_ordem') === 'recentes'
+    } catch {
+      return false
+    }
+  })
+  // Receber por itens: marca os itens, recebe só eles e a mesa continua aberta.
+  const [payItems, setPayItems] = useState<string[] | null>(null)
+  const [receiveItemsOpen, setReceiveItemsOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(timer)
+  }, [])
+
+  function toggleSort() {
+    const next = !newestFirst
+    setNewestFirst(next)
+    try {
+      localStorage.setItem('c2_pdv_mesa_ordem', next ? 'recentes' : 'antigos')
+    } catch {
+      // sem armazenamento: vale só agora
+    }
+  }
   const inputRef = useRef<HTMLInputElement>(null)
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -525,8 +572,65 @@ export function TableDetail({
     onBack()
   }
 
-  const openedFor = minutesSince(table.opened_at)
+  async function confirmReceiveItems(lines: PaymentModalLine[], change: number) {
+    const paidIds = new Set(chosenToPay.map((item) => item.id))
+    const receivePayments: FoodTablePayment[] = lines.map((line) => ({ form_payment: line.form_payment, amount: line.amount }))
+    const description = `RECEBEU ${chosenToPay.map((item) => `${item.quantity} ${item.name}`).join(', ')}`.slice(0, 250)
+    const next: FoodTable = {
+      ...table,
+      partials: [...table.partials],
+      items: table.items.map((item) => (paidIds.has(item.id) ? { ...item, is_received: true, updatedAt: nowIso() } : item)),
+      audit: [...table.audit],
+    }
+    next.partials.push({
+      id: newLocalId(),
+      companyId: table.companyId,
+      user_id: authorId,
+      synchronized: 'N',
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      deletedAt: null,
+      moment: nowIso(),
+      description,
+      received: chosenTotal,
+      author: authorId,
+      author_name: authorName,
+      item_ids: [...paidIds],
+      payments: receivePayments,
+    })
+    pushAudit(next, description, 'success')
+    setReceiveItemsOpen(false)
+    setPayItems(null)
+    onSave(next)
+    await print(
+      `Recebimento ${tableLabel}`,
+      buildTableBillDocument({
+        companyName,
+        companyDocument,
+        label: `${tableLabel} (parcial)`,
+        items: chosenToPay.map((item) => ({ name: item.name, quantity: item.quantity, total: item.sub_total, observation: item.observation })),
+        subtotal: chosenTotal,
+        total: chosenTotal,
+        payments: lines.map((line) => ({ name: line.name, amount: line.received ?? line.amount })),
+        change,
+      })
+    )
+  }
+
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0)
+  const sortedItems = [...items].sort((a, b) =>
+    newestFirst
+      ? (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.item - a.item
+      : (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.item - b.item
+  )
+  const lastOrder = items.map((item) => item.createdAt ?? '').filter(Boolean).sort().pop() ?? table.opened_at
+  const minutesInHouse = minutesBetween(table.opened_at, now)
+  const minutesWithoutOrder = minutesBetween(lastOrder, now)
+  const idle = idleAlertMinutes > 0 && items.length > 0 && minutesWithoutOrder >= idleAlertMinutes
+  const history = [...table.audit].sort((a, b) => (b.moment ?? '').localeCompare(a.moment ?? ''))
+  const payableItems = items.filter((item) => !item.is_received && !item.print_hold)
+  const chosenToPay = payItems ? payableItems.filter((item) => payItems.includes(item.id)) : []
+  const chosenTotal = Math.round(chosenToPay.reduce((sum, item) => sum + item.sub_total, 0) * 100) / 100
 
   const menuPanel = (
     <section className={`${mobileView === 'menu' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
@@ -613,6 +717,55 @@ export function TableDetail({
     <aside
       className={`${mobileView === 'comanda' ? 'flex' : 'hidden'} min-h-0 w-full flex-none flex-col border-[var(--border)] bg-[var(--surface)] md:flex md:w-[380px] md:border-l lg:w-[420px]`}
     >
+      <div className="flex flex-none items-center gap-1 border-b border-[var(--border)] px-3 py-2">
+        {(['itens', 'historico'] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setComandaTab(tab)}
+            className={`rounded-lg px-3 py-1.5 text-[12.5px] font-bold ${
+              comandaTab === tab ? 'bg-[var(--blue-100)] text-[var(--blue-700)]' : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
+            }`}
+          >
+            {tab === 'itens' ? `Itens (${itemCount})` : `Histórico (${history.length})`}
+          </button>
+        ))}
+        {comandaTab === 'itens' && items.length > 1 && (
+          <button
+            type="button"
+            onClick={toggleSort}
+            title="Ordem dos itens"
+            className="ml-auto rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]"
+          >
+            {newestFirst ? 'Último → primeiro' : 'Primeiro → último'}
+          </button>
+        )}
+      </div>
+
+      {comandaTab === 'historico' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          {history.length === 0 ? (
+            <p className="py-10 text-center text-[13px] text-[var(--muted)]">Sem movimentações ainda.</p>
+          ) : (
+            <ol>
+              {history.map((entry) => (
+                <li key={entry.id} className="flex gap-3 pb-3">
+                  <span className={`mt-1.5 h-2.5 w-2.5 flex-none rounded-full ${AUDIT_DOT[entry.type] ?? AUDIT_DOT.default}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] leading-snug font-semibold text-[var(--ink)]">{entry.description}</p>
+                    {entry.reason && <p className="text-[12px] text-[var(--ink-soft)]">Motivo: {entry.reason}</p>}
+                    <p className="text-[11.5px] text-[var(--muted)]">
+                      {formatHour(entry.moment)}
+                      {entry.author_name ? ` · ${entry.author_name}` : ''}
+                      {entry.requested_by_client ? ' · pedido do cliente' : ''}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 px-6 py-12 text-center">
@@ -621,10 +774,26 @@ export function TableDetail({
           </div>
         ) : (
           <ul className="divide-y divide-[var(--border)]">
-            {items.map((item) => {
+            {sortedItems.map((item) => {
               const held = Boolean(item.print_hold)
+              const paid = Boolean(item.is_received)
+              const selectable = payItems !== null && !paid && !held
+              const checked = selectable && payItems!.includes(item.id)
               return (
-                <li key={item.id} className={`flex gap-3 px-4 py-3 ${held ? 'bg-[var(--green-100)]/50' : ''}`}>
+                <li
+                  key={item.id}
+                  onClick={() => selectable && setPayItems((current) => (current ? (checked ? current.filter((id) => id !== item.id) : [...current, item.id]) : current))}
+                  className={`flex gap-3 px-4 py-3 ${held ? 'bg-[var(--green-100)]/50' : ''} ${selectable ? 'cursor-pointer hover:bg-[var(--page)]' : ''} ${checked ? '!bg-[var(--blue-100)]' : ''} ${payItems !== null && !selectable ? 'opacity-50' : ''}`}
+                >
+                  {payItems !== null && (
+                    <span
+                      className={`mt-1 flex h-5 w-5 flex-none items-center justify-center rounded-md border-2 ${
+                        checked ? 'border-[var(--blue-500)] bg-[var(--blue-500)]' : 'border-[var(--border)]'
+                      }`}
+                    >
+                      {checked && <span className="h-2 w-2 rounded-sm bg-white" />}
+                    </span>
+                  )}
                   <span className="mt-0.5 flex h-7 min-w-7 flex-none items-center justify-center rounded-lg bg-[var(--page)] px-1.5 text-[12.5px] font-bold text-[var(--ink)]">
                     {item.quantity}
                   </span>
@@ -638,14 +807,20 @@ export function TableDetail({
                       <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
                         {held ? (
                           <span className="rounded-full bg-[var(--green-600)] px-2 py-0.5 text-[10.5px] font-bold text-white">NOVO · não enviado</span>
+                        ) : paid ? (
+                          <span className="rounded-full bg-[var(--green-100)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--green-600)]">PAGO</span>
                         ) : (
                           <span>Enviado</span>
                         )}
+                        <span>
+                          · {formatHour(item.createdAt)}
+                          {item.author_name ? ` · ${firstName(item.author_name)}` : ''}
+                        </span>
                         {item.quantity > 1 && <span>· {formatCurrency(item.unit_price)} cada</span>}
                       </span>
-                      {held ? (
+                      {payItems !== null ? null : held ? (
                         <Stepper small value={item.quantity} onChange={(value) => changeHeldQuantity(item.id, value)} />
-                      ) : (
+                      ) : paid ? null : (
                         <button
                           type="button"
                           onClick={() => openCancelItem(item.id)}
@@ -664,7 +839,36 @@ export function TableDetail({
           </ul>
         )}
       </div>
+      )}
 
+      {payItems !== null ? (
+        <div className="flex-none border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <p className="text-[12.5px] text-[var(--ink-soft)]">Toque nos itens que serão pagos agora. A mesa continua aberta com o resto.</p>
+          <div className="mt-2 flex items-baseline justify-between">
+            <span className="text-[14px] font-bold text-[var(--ink)]">
+              {chosenToPay.length} {chosenToPay.length === 1 ? 'item' : 'itens'} selecionado{chosenToPay.length === 1 ? '' : 's'}
+            </span>
+            <span className="text-[22px] font-bold text-[var(--ink)]">{formatCurrency(chosenTotal)}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-[1fr_2fr] gap-2">
+            <button
+              type="button"
+              onClick={() => setPayItems(null)}
+              className="rounded-xl border border-[var(--border)] py-3 text-[13px] font-semibold text-[var(--ink-soft)]"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={chosenToPay.length === 0}
+              onClick={() => setReceiveItemsOpen(true)}
+              className="rounded-xl bg-[var(--blue-500)] py-3 text-[14px] font-bold text-white disabled:opacity-45"
+            >
+              Receber {formatCurrency(chosenTotal)}
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="flex-none border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="space-y-1 text-[13px]">
           <div className="flex justify-between text-[var(--ink-soft)]">
@@ -738,7 +942,20 @@ export function TableDetail({
         >
           {items.length > 0 && table.sales.length === 0 && receiveTotal > 0 ? `Receber ${formatCurrency(receiveTotal)} e fechar` : 'Fechar mesa'}
         </button>
+        {payableItems.length > 1 && (
+          <button
+            type="button"
+            onClick={() => {
+              setComandaTab('itens')
+              setPayItems([])
+            }}
+            className="mt-2 w-full rounded-xl py-2 text-[13px] font-semibold text-[var(--blue-700)] hover:bg-[var(--blue-100)]"
+          >
+            Receber só alguns itens (mesa continua aberta)
+          </button>
+        )}
       </div>
+      )}
     </aside>
   )
 
@@ -755,12 +972,19 @@ export function TableDetail({
         </button>
         <div className="min-w-0 text-center">
           <p className="truncate text-[16px] font-bold text-[var(--ink)]">{tableLabel}</p>
-          {openedFor && (
-            <p className="flex items-center justify-center gap-1 text-[11.5px] text-[var(--muted)]">
+          <p className="flex flex-wrap items-center justify-center gap-x-2 text-[11.5px] text-[var(--muted)]">
+            <span className="flex items-center gap-1">
               <ClockIcon className="h-3 w-3" />
-              aberta há {openedFor}
-            </p>
-          )}
+              chegou {formatHour(table.opened_at)}
+            </span>
+            <span>· {formatMinutes(minutesInHouse)} de casa</span>
+            {items.length > 0 && (
+              <span className={idle ? 'rounded-full bg-[var(--red-500)] px-2 font-bold text-white' : ''}>
+                · {idle ? '⚠ ' : ''}
+                {formatMinutes(minutesWithoutOrder)} sem pedir
+              </span>
+            )}
+          </p>
         </div>
         <p className="min-w-[72px] text-right text-[15px] font-bold text-[var(--ink)]">{formatCurrency(receiveTotal)}</p>
       </div>
@@ -880,6 +1104,16 @@ export function TableDetail({
           </button>
         )}
       </div>
+
+      <PaymentModal
+        open={receiveItemsOpen}
+        total={chosenTotal}
+        title={`Receber ${chosenToPay.length} ${chosenToPay.length === 1 ? 'item' : 'itens'} · ${tableLabel}`}
+        confirmLabel="Receber itens"
+        acquirerStorageKey={acquirerStorageKey}
+        onClose={() => setReceiveItemsOpen(false)}
+        onConfirm={(lines, change) => void confirmReceiveItems(lines, change)}
+      />
 
       {optionsFor && <ItemOptionsModal product={optionsFor.product} onClose={() => setOptionsFor(null)} onConfirm={confirmOptions} />}
 

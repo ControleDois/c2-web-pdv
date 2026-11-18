@@ -147,6 +147,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const [tablePreview, setTablePreview] = useState<{ title: string; documents: PrintDocument[] } | null>(null)
   // Cardápio das mesas (com adicionais): abre com a cópia do aparelho e atualiza do servidor.
   const [foodMenu, setFoodMenu] = useState<FoodMenu | null>(() => loadCachedMenu(company.id))
+  const idleAlertMinutes = Number(company.config?.food_table_idle_alert_minutes ?? foodMenu?.idle_alert_minutes ?? 30)
   const refreshFoodMenu = () =>
     fetchFoodMenu(session.token.token, company.id)
       .then(setFoodMenu)
@@ -348,6 +349,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         companyDocument={company.people?.document}
         acquirerStorageKey={`c2_pdv_card_acquirer_${company.id}`}
         menu={foodMenu}
+        idleAlertMinutes={idleAlertMinutes}
       />
       </>
     )
@@ -470,6 +472,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
             onSearchChange={setTableSearch}
             onSubmit={handleTableInputSubmit}
             onSelect={enterTable}
+            idleAlertMinutes={idleAlertMinutes}
             onOpenSettings={() => setScreen('settings')}
             onOpenQuickSale={quickSaleEnabled ? () => setScreen('quick-sale') : undefined}
           />

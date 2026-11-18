@@ -56,6 +56,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [scaleValueType, setScaleValueType] = useState<'price' | 'weight'>(config?.scale_value_type ?? 'price')
   const [scaleSample, setScaleSample] = useState('')
   const [tokensEnabled, setTokensEnabled] = useState(config?.sale_tokens_enabled !== false)
+  const [idleMinutes, setIdleMinutes] = useState(String(config?.food_table_idle_alert_minutes ?? 30))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -107,6 +108,7 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         scale_value_digits: scaleValueDigits,
         scale_value_type: scaleValueType,
         sale_tokens_enabled: tokensEnabled,
+        food_table_idle_alert_minutes: Math.min(600, Math.max(0, Number(idleMinutes) || 0)),
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -443,6 +445,23 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
             >
               Folha A4
             </button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <p className="text-[13.5px] font-semibold text-[var(--ink)]">Mesas: alerta de mesa sem pedir</p>
+          <p className="mt-0.5 text-[12px] text-[var(--ink-soft)]">
+            Depois de quantos minutos sem pedir nada a mesa fica em vermelho no PDV e no app do garçom. 0 desliga o alerta.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={idleMinutes}
+              onChange={(event) => setIdleMinutes(event.target.value.replace(/\D/g, '').slice(0, 3))}
+              className="w-24 rounded-xl border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-center text-[14px] font-bold text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--blue-300)]"
+            />
+            <span className="text-[13px] text-[var(--ink-soft)]">minutos</span>
           </div>
         </div>
 
