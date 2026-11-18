@@ -30,6 +30,8 @@ export interface FoodTableItem extends FoodBaseLocal {
   pending_print: boolean
   // Lançado no PDV e ainda na tela: só vai para a produção quando o operador sai da mesa.
   print_hold?: boolean
+  // Pedido (lançamento) a que o item pertence: o servidor liga um ao outro por este id.
+  food_order_id?: string
   observation?: string
   author: string
   author_name: string

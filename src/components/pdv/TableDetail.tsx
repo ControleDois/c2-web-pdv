@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FoodTable, FoodTableItem, FoodTablePayment } from '../../lib/foodTypes'
 import { activeItems, isDeliveryTable, isIfoodOrder, newLocalId } from '../../lib/foodTypes'
 import { buildTableBillDocument, type PrintDocument } from '../../lib/printing'
 import { PaymentModal, type PaymentModalLine } from './PaymentModal'
 import type { IfoodCancellationReason } from '../../lib/foodApi'
 import { ApiError } from '../../lib/api'
-import { filterProductBy, type LocalProduct } from '../../lib/db'
+import { filterProductBy } from '../../lib/db'
+import type { FoodMenu, MenuProduct } from '../../lib/foodMenu'
+import { ItemOptionsModal, Stepper, type ItemChoice } from './ItemOptionsModal'
 import { formatCurrency } from '../../lib/format'
-import { ChevronLeftIcon, CopyIcon, PrinterIcon, TrashIcon, XCircleIcon } from '../icons'
+import { ChevronLeftIcon, ClockIcon, CopyIcon, PrinterIcon, SearchIcon, TrashIcon, XCircleIcon } from '../icons'
 
 interface TableDetailProps {
   table: FoodTable
@@ -26,18 +28,34 @@ interface TableDetailProps {
   companyName: string
   companyDocument?: string | null
   acquirerStorageKey?: string
+  // Cardápio (categorias, produtos e adicionais); null = ainda não baixou, busca no catálogo local.
+  menu: FoodMenu | null
 }
 
-type InputMode = 'product' | 'quantity'
 
 function nowIso(): string {
   return new Date().toISOString()
 }
 
-function parseQuantity(value: string): number {
-  const normalized = value.replace(',', '.')
-  const num = Number(normalized)
-  return Number.isFinite(num) && num > 0 ? num : 1
+// "3*coca" ou "3 x coca": lança já com a quantidade.
+function splitQuantity(value: string): { quantity: number; term: string } {
+  const match = value.match(/^\s*(\d+(?:[.,]\d+)?)\s*[*xX]\s*(.+)$/)
+  if (!match) return { quantity: 1, term: value.trim() }
+  const quantity = Number(match[1].replace(',', '.'))
+  return { quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1, term: match[2].trim() }
+}
+
+const normalizeText = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+function minutesSince(iso: string | null | undefined) {
+  if (!iso) return null
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (!Number.isFinite(diff) || diff < 0) return null
+  return diff < 60 ? `${diff} min` : `${Math.floor(diff / 60)}h${String(diff % 60).padStart(2, '0')}`
 }
 
 const DELIVERY_STATUS_LABELS: Record<string, string> = {
@@ -65,12 +83,13 @@ export function TableDetail({
   companyName,
   companyDocument,
   acquirerStorageKey,
+  menu,
 }: TableDetailProps) {
-  const [inputMode, setInputMode] = useState<InputMode>('product')
   const [search, setSearch] = useState('')
-  const [selectedProduct, setSelectedProduct] = useState<LocalProduct | null>(null)
-  const [matches, setMatches] = useState<LocalProduct[]>([])
-  const [quantityInput, setQuantityInput] = useState('1')
+  const [category, setCategory] = useState<string>('all')
+  const [localMatches, setLocalMatches] = useState<MenuProduct[]>([])
+  const [optionsFor, setOptionsFor] = useState<{ product: MenuProduct; quantity: number } | null>(null)
+  const [mobileView, setMobileView] = useState<'menu' | 'comanda'>('menu')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -96,23 +115,54 @@ export function TableDetail({
 
   useEffect(() => {
     inputRef.current?.focus()
-  }, [inputMode])
+  }, [])
 
+  const { quantity: typedQuantity, term } = splitQuantity(search)
+
+  // Sem cardápio baixado (primeiro uso sem internet): busca no catálogo local de produtos.
   useEffect(() => {
-    if (inputMode !== 'product') return
-    if (!search.trim()) {
-      setMatches([])
-      setSelectedProduct(null)
+    if (menu || !term) {
+      setLocalMatches([])
       return
     }
     const timeout = setTimeout(() => {
-      filterProductBy(search.trim()).then((results) => {
-        setMatches(results)
-        setSelectedProduct(results[0] ?? null)
-      })
+      filterProductBy(term).then((results) =>
+        setLocalMatches(
+          results.slice(0, 40).map((product) => ({
+            id: product.id,
+            code: product.code ?? '',
+            name: product.name,
+            description: null,
+            sale_value: Number(product.sale_value || 0),
+            unit: product.unit ?? null,
+            image_url: null,
+            category_ids: [],
+            complements: [],
+          }))
+        )
+      )
     }, 100)
     return () => clearTimeout(timeout)
-  }, [search, inputMode])
+  }, [term, menu])
+
+  const categories = useMemo(() => {
+    if (!menu) return []
+    const used = new Set(menu.products.flatMap((product) => product.category_ids))
+    return menu.categories.filter((item) => used.has(item.id))
+  }, [menu])
+
+  const visibleProducts = useMemo(() => {
+    if (!menu) return localMatches
+    const needle = normalizeText(term)
+    return menu.products.filter((product) => {
+      if (needle) {
+        const code = String(product.code ?? '')
+        const internal = String(product.internal_code ?? '')
+        return normalizeText(product.name).includes(needle) || code === needle || internal === needle
+      }
+      return category === 'all' || product.category_ids.includes(category)
+    })
+  }, [menu, localMatches, term, category])
 
   const items = activeItems(table)
   const subtotal = items.reduce((sum, item) => sum + item.sub_total, 0)
@@ -142,10 +192,23 @@ export function TableDetail({
     })
   }
 
-  function handleAddProduct(product: LocalProduct, quantity: number) {
+  function addItem(product: MenuProduct, quantity: number, unitValue: number, observation: string) {
     const next: FoodTable = { ...table, items: [...table.items], orders: [...table.orders], audit: [...table.audit] }
-    const unitValue = Number(product.sale_value || 0)
-    const itemNumber = next.items.length + 1
+    // Mesmo produto, mesmo preço e mesma observação ainda não enviado: só soma na linha.
+    const same = next.items.find(
+      (item) =>
+        item.print_hold &&
+        !item.removed &&
+        item.product_id === product.id &&
+        item.unit_price === unitValue &&
+        (item.observation || '') === observation
+    )
+    if (same) {
+      changeHeldQuantity(same.id, same.quantity + quantity, `LANÇOU ${quantity} ${product.name}`)
+      return
+    }
+    const itemNumber = next.items.reduce((max, item) => Math.max(max, item.item), 0) + 1
+    const orderId = newLocalId()
     const item: FoodTableItem = {
       id: newLocalId(),
       companyId: table.companyId,
@@ -168,12 +231,14 @@ export function TableDetail({
       selected: false,
       pending_print: true,
       print_hold: true,
+      food_order_id: orderId,
+      observation: observation || undefined,
       author: authorId,
       author_name: authorName,
     }
     next.items.push(item)
     next.orders.push({
-      id: newLocalId(),
+      id: orderId,
       companyId: table.companyId,
       user_id: authorId,
       synchronized: 'N',
@@ -186,38 +251,64 @@ export function TableDetail({
       items: [{ item: itemNumber, code: item.code, product_code: item.product_code, name: item.name, quantity }],
     })
 
-    const wasClosedReopen = table.status === 'closed'
-    if (wasClosedReopen) {
-      pushAudit(next, 'REABERTURA POR NOVO LANÇAMENTO', 'warning')
-    }
-    pushAudit(next, `LANÇOU ${quantity} ${product.name}`, 'default')
+    if (table.status === 'closed') pushAudit(next, 'REABERTURA POR NOVO LANÇAMENTO', 'warning')
+    pushAudit(next, `LANÇOU ${quantity} ${product.name}${observation ? ` (${observation})` : ''}`, 'default')
 
     next.status = 'open_with_items'
     next.last_order_at = nowIso()
     onSave(next)
   }
 
-  function handleProductSubmit() {
+  // Item ainda não enviado para a produção: muda a quantidade ou tira da comanda sem pedir motivo.
+  function changeHeldQuantity(itemId: string, quantity: number, auditText?: string) {
+    const target = table.items.find((item) => item.id === itemId)
+    if (!target || !target.print_hold) return
+    const next: FoodTable = { ...table, items: [...table.items], orders: [...table.orders], audit: [...table.audit] }
+    if (quantity <= 0) {
+      next.items = next.items.filter((item) => item.id !== itemId)
+      next.orders = next.orders
+        .map((order) => ({ ...order, items: order.items.filter((ref) => ref.item !== target.item) }))
+        .filter((order) => order.items.length > 0 || order.id !== target.food_order_id)
+      pushAudit(next, `TIROU ${target.quantity} ${target.name} (ANTES DE ENVIAR)`, 'warning')
+    } else {
+      next.items = next.items.map((item) =>
+        item.id === itemId ? { ...item, quantity, sub_total: item.unit_price * quantity, total: item.unit_price * quantity, updatedAt: nowIso() } : item
+      )
+      next.orders = next.orders.map((order) => ({
+        ...order,
+        items: order.items.map((ref) => (ref.item === target.item ? { ...ref, quantity } : ref)),
+      }))
+      if (auditText) pushAudit(next, auditText, 'default')
+    }
+    next.status = activeItems(next).length > 0 ? 'open_with_items' : 'open_empty'
+    onSave(next)
+  }
+
+  function pickProduct(product: MenuProduct, quantity = 1) {
+    if (product.complements.length > 0) {
+      setOptionsFor({ product, quantity })
+      return
+    }
+    addItem(product, quantity, Number(product.sale_value || 0), '')
+    setSearch('')
+    inputRef.current?.focus()
+  }
+
+  function confirmOptions(choice: ItemChoice) {
+    if (!optionsFor) return
+    addItem(optionsFor.product, choice.quantity * optionsFor.quantity, choice.unitPrice, choice.observation)
+    setOptionsFor(null)
+    setSearch('')
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  function handleSearchSubmit() {
     if (!search.trim()) {
       leaveTable()
       return
     }
-    if (!selectedProduct) {
-      setSearch('')
-      return
-    }
-    setInputMode('quantity')
-    setQuantityInput('1')
-  }
-
-  function handleQuantitySubmit() {
-    if (!selectedProduct) return
-    const quantity = parseQuantity(quantityInput)
-    handleAddProduct(selectedProduct, quantity)
-    setSearch('')
-    setSelectedProduct(null)
-    setMatches([])
-    setInputMode('product')
+    const first = visibleProducts[0]
+    if (first) pickProduct(first, typedQuantity)
   }
 
   function openCancelItem(itemId?: string) {
@@ -434,17 +525,244 @@ export function TableDetail({
     onBack()
   }
 
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-none items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-        <button type="button" onClick={leaveTable} className="flex items-center gap-1 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)]">
-          <ChevronLeftIcon className="h-3.5 w-3.5" />
-          Sair
+  const openedFor = minutesSince(table.opened_at)
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0)
+
+  const menuPanel = (
+    <section className={`${mobileView === 'menu' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
+      <div className="flex-none space-y-2.5 p-3 sm:p-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            handleSearchSubmit()
+          }}
+          className="flex items-center gap-2.5 rounded-2xl bg-[var(--surface)] px-4 py-3 shadow-[var(--card-shadow)] ring-1 ring-transparent focus-within:ring-[var(--blue-300)]"
+        >
+          <SearchIcon className="h-4.5 w-4.5 flex-none text-[var(--muted)]" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                if (search) setSearch('')
+                else leaveTable()
+              }
+            }}
+            placeholder="Buscar produto ou código (3*coca lança 3)"
+            className="w-full bg-transparent text-[15px] text-[var(--ink)] placeholder:text-[13px] placeholder:text-[var(--muted)] focus:outline-none"
+          />
+          {typedQuantity !== 1 && term && (
+            <span className="flex-none rounded-full bg-[var(--blue-100)] px-2.5 py-0.5 text-[12px] font-bold text-[var(--blue-700)]">{typedQuantity}x</span>
+          )}
+        </form>
+        {categories.length > 0 && !term && (
+          <div className="-mx-3 flex gap-1.5 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none] sm:-mx-4 sm:px-4 [&::-webkit-scrollbar]:hidden">
+            {[{ id: 'all', name: 'Todos' }, ...categories].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setCategory(item.id)}
+                className={`flex-none rounded-full px-3.5 py-1.5 text-[12.5px] font-bold transition ${
+                  category === item.id
+                    ? 'bg-[var(--blue-500)] text-white'
+                    : 'bg-[var(--surface)] text-[var(--ink-soft)] shadow-[var(--card-shadow)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-24 sm:px-4 md:pb-4">
+        {visibleProducts.length === 0 ? (
+          <p className="py-12 text-center text-[13px] text-[var(--muted)]">
+            {term ? `Nenhum produto encontrado para "${term}".` : menu ? 'Nenhum produto nesta categoria.' : 'Digite o nome ou o código do produto.'}
+          </p>
+        ) : (
+          <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
+            {visibleProducts.map((product, index) => (
+              <button
+                key={product.id}
+                type="button"
+                onClick={() => pickProduct(product, term ? typedQuantity : 1)}
+                className={`group flex min-h-[88px] flex-col justify-between rounded-2xl bg-[var(--surface)] p-3 text-left shadow-[var(--card-shadow)] ring-1 transition hover:-translate-y-0.5 hover:ring-[var(--blue-300)] active:scale-[0.98] ${
+                  term && index === 0 ? 'ring-[var(--blue-500)]' : 'ring-transparent'
+                }`}
+              >
+                <span className="line-clamp-2 text-[13.5px] font-bold leading-snug text-[var(--ink)]">{product.name}</span>
+                <span className="mt-2 flex items-end justify-between gap-1">
+                  <span className="text-[13.5px] font-bold text-[var(--blue-700)]">{formatCurrency(Number(product.sale_value || 0))}</span>
+                  {product.complements.length > 0 && (
+                    <span className="rounded-full bg-[var(--amber-100)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--amber-500)]">adicionais</span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+
+  const comandaPanel = (
+    <aside
+      className={`${mobileView === 'comanda' ? 'flex' : 'hidden'} min-h-0 w-full flex-none flex-col border-[var(--border)] bg-[var(--surface)] md:flex md:w-[380px] md:border-l lg:w-[420px]`}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {items.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-6 py-12 text-center">
+            <p className="text-[14px] font-bold text-[var(--ink)]">Mesa sem itens</p>
+            <p className="text-[12.5px] text-[var(--muted)]">Toque nos produtos para lançar.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-[var(--border)]">
+            {items.map((item) => {
+              const held = Boolean(item.print_hold)
+              return (
+                <li key={item.id} className={`flex gap-3 px-4 py-3 ${held ? 'bg-[var(--green-100)]/50' : ''}`}>
+                  <span className="mt-0.5 flex h-7 min-w-7 flex-none items-center justify-center rounded-lg bg-[var(--page)] px-1.5 text-[12.5px] font-bold text-[var(--ink)]">
+                    {item.quantity}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[13.5px] font-semibold leading-snug text-[var(--ink)]">{item.name}</p>
+                      <p className="flex-none text-[13.5px] font-bold text-[var(--ink)]">{formatCurrency(item.sub_total)}</p>
+                    </div>
+                    {item.observation && <p className="mt-0.5 text-[12px] leading-snug text-[var(--ink-soft)]">{item.observation}</p>}
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
+                        {held ? (
+                          <span className="rounded-full bg-[var(--green-600)] px-2 py-0.5 text-[10.5px] font-bold text-white">NOVO · não enviado</span>
+                        ) : (
+                          <span>Enviado</span>
+                        )}
+                        {item.quantity > 1 && <span>· {formatCurrency(item.unit_price)} cada</span>}
+                      </span>
+                      {held ? (
+                        <Stepper small value={item.quantity} onChange={(value) => changeHeldQuantity(item.id, value)} />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openCancelItem(item.id)}
+                          aria-label={`Cancelar ${item.name}`}
+                          title="Cancelar item"
+                          className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--red-100)] hover:text-[var(--red-500)]"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="flex-none border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="space-y-1 text-[13px]">
+          <div className="flex justify-between text-[var(--ink-soft)]">
+            <span>Subtotal · {itemCount} {itemCount === 1 ? 'item' : 'itens'}</span>
+            <span className="font-semibold text-[var(--ink)]">{formatCurrency(subtotal)}</span>
+          </div>
+          {deliveryFee > 0 && (
+            <div className="flex justify-between text-[var(--ink-soft)]">
+              <span>Taxa de entrega</span>
+              <span className="font-semibold text-[var(--ink)]">{formatCurrency(deliveryFee)}</span>
+            </div>
+          )}
+          {partialTotal > 0 && (
+            <div className="flex justify-between text-[var(--ink-soft)]">
+              <span>Já recebido</span>
+              <span className="font-semibold text-[var(--green-600)]">- {formatCurrency(partialTotal)}</span>
+            </div>
+          )}
+          <div className="flex items-baseline justify-between pt-1">
+            <span className="text-[14px] font-bold text-[var(--ink)]">Total</span>
+            <span className="text-[24px] font-bold tracking-tight text-[var(--ink)]">{formatCurrency(receiveTotal)}</span>
+          </div>
+        </div>
+
+        {printNotice && (
+          <p className="mt-2 rounded-lg bg-[var(--red-100)] px-3 py-2 text-[12px] font-medium text-[var(--red-500)]">{printNotice}</p>
+        )}
+
+        {heldItems.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleSendOrder()}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--green-600)] py-3 text-[14px] font-bold text-white transition hover:opacity-90"
+          >
+            <PrinterIcon className="h-4 w-4" />
+            Enviar pedido para a produção ({heldItems.length})
+          </button>
+        )}
+
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={handlePrintBill}
+            disabled={items.length === 0}
+            className="rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)] disabled:opacity-40"
+          >
+            Imprimir conta
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleReprintOrder()}
+            disabled={items.length === 0}
+            className="rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] hover:text-[var(--ink)] disabled:opacity-40"
+          >
+            Reimprimir pedido
+          </button>
+          <button
+            type="button"
+            onClick={() => (ifood ? openIfoodCancel() : setCancelTableOpen(true))}
+            disabled={ifood && ifoodFinished}
+            className="flex items-center justify-center gap-1 rounded-xl border border-[var(--red-100)] py-2.5 text-[12.5px] font-semibold text-[var(--red-500)] disabled:opacity-40"
+          >
+            <XCircleIcon className="h-3.5 w-3.5" />
+            {ifood ? 'Cancelar pedido' : 'Cancelar mesa'}
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleCloseTable()}
+          className="mt-2 w-full rounded-xl bg-[var(--blue-500)] py-3.5 text-[15px] font-bold text-white transition hover:bg-[var(--blue-700)]"
+        >
+          {items.length > 0 && table.sales.length === 0 && receiveTotal > 0 ? `Receber ${formatCurrency(receiveTotal)} e fechar` : 'Fechar mesa'}
         </button>
-        <p className="text-[14px] font-bold text-[var(--ink)]">
-          {delivery ? `Delivery ${table.number}` : `Mesa ${table.number}`}
-        </p>
-        <div className="w-10" />
+      </div>
+    </aside>
+  )
+
+  return (
+    <div className="flex h-full flex-col bg-[var(--page)]">
+      <div className="flex flex-none items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 sm:px-4">
+        <button
+          type="button"
+          onClick={leaveTable}
+          className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[13px] font-semibold text-[var(--ink-soft)] hover:bg-[var(--page)] hover:text-[var(--ink)]"
+        >
+          <ChevronLeftIcon className="h-4 w-4" />
+          Salão
+        </button>
+        <div className="min-w-0 text-center">
+          <p className="truncate text-[16px] font-bold text-[var(--ink)]">{tableLabel}</p>
+          {openedFor && (
+            <p className="flex items-center justify-center gap-1 text-[11.5px] text-[var(--muted)]">
+              <ClockIcon className="h-3 w-3" />
+              aberta há {openedFor}
+            </p>
+          )}
+        </div>
+        <p className="min-w-[72px] text-right text-[15px] font-bold text-[var(--ink)]">{formatCurrency(receiveTotal)}</p>
       </div>
 
       {delivery && table.delivery_order && (
@@ -530,142 +848,40 @@ export function TableDetail({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {items.length === 0 ? (
-          <p className="py-10 text-center text-[13px] text-[var(--muted)]">Nenhum item lançado ainda.</p>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSelectedItemId(item.id)}
-                className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-left ${
-                  selectedItemId === item.id ? 'bg-[var(--blue-100)]' : item.print_hold ? 'bg-[var(--green-100)]' : 'bg-[var(--surface)] border border-[var(--border)]'
-                }`}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">
-                    {item.item}. {item.quantity}x {item.name}
-                  </span>
-                  {item.observation && <span className="block text-[11.5px] text-[var(--muted)]">{item.observation}</span>}
-                </span>
-                <span className="flex-none text-[13.5px] font-bold text-[var(--ink)]">{formatCurrency(item.sub_total)}</span>
-              </button>
-            ))}
-          </div>
+      <div className="flex flex-none gap-1 border-b border-[var(--border)] bg-[var(--surface)] p-1.5 md:hidden">
+        {(['menu', 'comanda'] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            onClick={() => setMobileView(view)}
+            className={`flex-1 rounded-lg py-2 text-[13px] font-bold ${
+              mobileView === view ? 'bg-[var(--blue-100)] text-[var(--blue-700)]' : 'text-[var(--ink-soft)]'
+            }`}
+          >
+            {view === 'menu' ? 'Cardápio' : `Comanda (${itemCount})`}
+          </button>
+        ))}
+      </div>
+
+      <div className="relative flex min-h-0 flex-1">
+        {menuPanel}
+        {comandaPanel}
+        {mobileView === 'menu' && items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setMobileView('comanda')}
+            className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-2xl bg-[var(--blue-500)] px-4 py-3.5 text-white shadow-xl md:hidden"
+          >
+            <span className="text-[14px] font-bold">
+              Ver comanda · {itemCount} {itemCount === 1 ? 'item' : 'itens'}
+              {heldItems.length > 0 ? ` (${heldItems.length} novo${heldItems.length === 1 ? '' : 's'})` : ''}
+            </span>
+            <span className="text-[15px] font-bold">{formatCurrency(receiveTotal)}</span>
+          </button>
         )}
       </div>
 
-      <div className="flex-none border-t border-[var(--border)] bg-[var(--surface)] p-3">
-        {inputMode === 'product' ? (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              handleProductSubmit()
-            }}
-            className="flex flex-col gap-2"
-          >
-            <input
-              ref={inputRef}
-              type="text"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Código, código de barras ou nome do produto"
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--page)] px-3.5 py-2.5 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--blue-300)]"
-            />
-            {search.trim() && (
-              <p className="text-[12px] text-[var(--muted)]">
-                {selectedProduct ? `${selectedProduct.name} — ${formatCurrency(Number(selectedProduct.sale_value || 0))}` : matches.length === 0 ? 'Produto não encontrado' : ''}
-              </p>
-            )}
-          </form>
-        ) : (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              handleQuantitySubmit()
-            }}
-            className="flex items-center gap-2"
-          >
-            <span className="text-[13px] font-semibold text-[var(--ink-soft)]">{selectedProduct?.name}</span>
-            <input
-              ref={inputRef}
-              type="text"
-              inputMode="decimal"
-              value={quantityInput}
-              onChange={(event) => setQuantityInput(event.target.value)}
-              className="w-24 rounded-xl border border-[var(--border)] bg-[var(--page)] px-3.5 py-2.5 text-center text-[14px] text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--blue-300)]"
-            />
-            <button type="submit" className="rounded-xl bg-[var(--blue-500)] px-4 py-2.5 text-[13.5px] font-bold text-white">
-              Lançar
-            </button>
-          </form>
-        )}
-
-        <div className="mt-3 flex items-center justify-between text-[13px]">
-          <span className="text-[var(--muted)]">Subtotal</span>
-          <span className="font-bold text-[var(--ink)]">{formatCurrency(subtotal)}</span>
-        </div>
-        {partialTotal > 0 && (
-          <div className="flex items-center justify-between text-[13px]">
-            <span className="text-[var(--muted)]">Já recebido</span>
-            <span className="font-semibold text-[var(--green-600)]">{formatCurrency(partialTotal)}</span>
-          </div>
-        )}
-
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <button type="button" onClick={() => openCancelItem()} disabled={items.length === 0} className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40">
-            <TrashIcon className="h-3.5 w-3.5" />
-            Cancelar item
-          </button>
-          <button
-            type="button"
-            onClick={() => (ifood ? openIfoodCancel() : setCancelTableOpen(true))}
-            disabled={ifood && ifoodFinished}
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--red-100)] py-2.5 text-[12.5px] font-semibold text-[var(--red-500)] disabled:opacity-40"
-          >
-            <XCircleIcon className="h-3.5 w-3.5" />
-            {ifood ? 'Cancelar pedido' : 'Cancelar mesa'}
-          </button>
-          <button type="button" onClick={() => void handleCloseTable()} className="rounded-xl bg-[var(--blue-500)] py-2.5 text-[12.5px] font-bold text-white">
-            {items.length > 0 && table.sales.length === 0 && receiveTotal > 0 ? 'Receber e fechar' : 'Fechar mesa'}
-          </button>
-        </div>
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => void handleSendOrder()}
-            disabled={heldItems.length === 0}
-            title="Manda para a cozinha/bar sem sair da mesa (ao sair, vai sozinho)"
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--green-600)] py-2.5 text-[12.5px] font-bold text-[var(--green-600)] disabled:border-[var(--border)] disabled:font-semibold disabled:text-[var(--ink-soft)] disabled:opacity-40"
-          >
-            <PrinterIcon className="h-3.5 w-3.5" />
-            Enviar pedido{heldItems.length > 0 ? ` (${heldItems.length})` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReprintOrder()}
-            disabled={items.length === 0}
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40"
-          >
-            <PrinterIcon className="h-3.5 w-3.5" />
-            Reimprimir pedido
-          </button>
-          <button
-            type="button"
-            onClick={handlePrintBill}
-            disabled={items.length === 0}
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border)] py-2.5 text-[12.5px] font-semibold text-[var(--ink-soft)] disabled:opacity-40"
-          >
-            <PrinterIcon className="h-3.5 w-3.5" />
-            Imprimir conta
-          </button>
-        </div>
-        {printNotice && (
-          <p className="mt-2 rounded-lg bg-[var(--red-100)] px-3 py-2 text-[12px] font-medium text-[var(--red-500)]">{printNotice}</p>
-        )}
-      </div>
+      {optionsFor && <ItemOptionsModal product={optionsFor.product} onClose={() => setOptionsFor(null)} onConfirm={confirmOptions} />}
 
       {cancelItemOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCancelItemOpen(false)}>

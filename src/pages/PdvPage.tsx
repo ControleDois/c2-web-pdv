@@ -12,6 +12,7 @@ import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { createPrintJob, reprintProductionOrder, type PrintDocument } from '../lib/printing'
+import { fetchFoodMenu, loadCachedMenu, type FoodMenu } from '../lib/foodMenu'
 import { Sidebar, MobileNav, type PdvScreen } from '../components/pdv/Sidebar'
 import { useFoodTables } from '../hooks/useFoodTables'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
@@ -144,6 +145,16 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const [tableSearch, setTableSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tablePreview, setTablePreview] = useState<{ title: string; documents: PrintDocument[] } | null>(null)
+  // Cardápio das mesas (com adicionais): abre com a cópia do aparelho e atualiza do servidor.
+  const [foodMenu, setFoodMenu] = useState<FoodMenu | null>(() => loadCachedMenu(company.id))
+  const refreshFoodMenu = () =>
+    fetchFoodMenu(session.token.token, company.id)
+      .then(setFoodMenu)
+      .catch(() => undefined)
+  useEffect(() => {
+    void refreshFoodMenu()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.id])
 
   useEffect(() => {
     let cancelled = false
@@ -241,6 +252,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   }
 
   function enterTable(table: FoodTable) {
+    void refreshFoodMenu()
     setSelectedId(table.id)
     setSelectedTableId(table.id)
     // Pedido do iFood aberto sem número/ID (cópia local antiga): busca do
@@ -335,6 +347,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         companyName={company.people?.name || 'Controle Dois'}
         companyDocument={company.people?.document}
         acquirerStorageKey={`c2_pdv_card_acquirer_${company.id}`}
+        menu={foodMenu}
       />
       </>
     )

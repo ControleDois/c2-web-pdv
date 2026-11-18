@@ -67,6 +67,7 @@ export function normalizeRemoteTable(raw: any): FoodTable {
     removed: Boolean(item.is_removed),
     selected: false,
     pending_print: Boolean(item.pending_print),
+    food_order_id: item.food_order_id || undefined,
     observation: item.observation || undefined,
     author: item.user_id || '',
     author_name: item.author_name || '',

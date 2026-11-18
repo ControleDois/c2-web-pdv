@@ -305,6 +305,14 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function MinusIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M4 10h12" />
+    </svg>
+  )
+}
+
 export function TrashIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" {...props}>
