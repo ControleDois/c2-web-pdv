@@ -159,7 +159,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     })
     orderChime()
   }
-  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer, syncNow } = useFoodTables(session, company, handleNewItems)
+  const { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer, syncNow, sendTableNow } = useFoodTables(session, company, handleNewItems)
 
   // Toca de novo a cada 6 segundos e pisca o título da aba até o caixa dar ciente ou abrir a mesa.
   useEffect(() => {
@@ -335,7 +335,13 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
 
   // Manda o pedido da mesa aberta sem sair dela.
   function sendTableOrderNow(table: FoodTable) {
-    return saveTable({ ...table, items: table.items.map((item) => ({ ...item, print_hold: false })) }).then(() => syncNow())
+    const held = new Set(table.items.filter((item) => item.print_hold).map((item) => item.id))
+    return sendTableNow({ ...table, items: table.items.map((item) => ({ ...item, print_hold: false })) }).catch(async (err) => {
+      // Não foi: os itens voltam a "não enviado" na tela (vão quando o caixa sair da mesa ou tentar de novo).
+      const current = tables.find((item) => item.id === table.id) ?? table
+      await saveTable({ ...current, items: current.items.map((item) => (held.has(item.id) ? { ...item, print_hold: true } : item)) })
+      throw err
+    })
   }
 
   function reprintTableOrder(table: FoodTable) {

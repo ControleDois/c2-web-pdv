@@ -493,8 +493,13 @@ export function TableDetail({
     try {
       await onSendOrder()
       setPrintNotice(null)
-    } catch {
-      setPrintNotice('Não foi possível enviar agora. O pedido vai assim que a internet voltar.')
+    } catch (err) {
+      // Mostra o motivo que o servidor devolveu; sem internet, o pedido segue na fila e vai sozinho.
+      setPrintNotice(
+        err instanceof ApiError
+          ? `O servidor recusou o pedido: ${err.message}`
+          : 'Sem conexão com o servidor agora. O pedido vai sozinho assim que a internet voltar.'
+      )
     }
   }
 

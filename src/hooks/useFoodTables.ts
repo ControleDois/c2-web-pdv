@@ -16,6 +16,7 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
   const [tables, setTables] = useState<FoodTable[]>([])
   const selectedTableIdRef = useRef<string | null>(null)
   const syncingRef = useRef(false)
+  const saveTableRef = useRef<(table: FoodTable) => Promise<FoodTable>>(async (table) => table)
 
   const reloadFromDb = useCallback(async () => {
     const all = await getAllTables()
@@ -70,6 +71,50 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
   // Envia ao servidor tudo que estiver synchronized:'N'. A mesa aberta na tela com itens
   // recém-lançados espera o operador sair (ou tocar em "Enviar pedido"): assim o pedido sai
   // de uma vez na impressora da cozinha/bar, e não um papel por item.
+  // Manda uma mesa ao servidor; o erro sobe (com a mensagem do servidor) para quem chamou.
+  const pushTable = useCallback(
+    async (table: FoodTable) => {
+      const payload: FoodSyncPayload = {
+        device_id: getSocketId() || '',
+        source: 'pdv',
+        id: table.id,
+        companyId: company.id,
+        number: table.number,
+        status: table.status,
+        opened_at: table.opened_at,
+        closed_at: table.closed_at,
+        kind: table.kind ?? 'table',
+        customer_name: table.customer_name ?? null,
+        customer_phone: table.customer_phone ?? null,
+        delivery_address: table.delivery_address ?? null,
+        delivery_fee: table.delivery_fee ?? 0,
+        items: table.items.map(({ print_hold: _hold, ...item }) => item),
+        orders: table.orders,
+        partials: table.partials,
+        sales: table.sales,
+        audit: table.audit,
+      }
+      await syncTable(session.token.token, company.id, payload)
+      if (table.status === 'closed' || table.status === 'canceled') {
+        await deleteTable(table.id)
+        return
+      }
+      // Só marca como enviada se ninguém mexeu na mesa enquanto ia para o servidor.
+      const latest = (await getAllTables()).find((item) => item.id === table.id)
+      if (latest && latest.updatedAt === table.updatedAt) {
+        await putTable({
+          ...table,
+          synchronized: 'S',
+          items: table.items.map((item) => ({ ...item, print_hold: false, pending_print: false })),
+        })
+      }
+    },
+    [session.token.token, company.id]
+  )
+
+  // Envia ao servidor tudo que estiver synchronized:'N'. A mesa aberta na tela com itens
+  // recém-lançados espera o operador sair (ou tocar em "Enviar pedido"): assim o pedido sai
+  // de uma vez na impressora da cozinha/bar, e não um papel por item.
   const pushPending = useCallback(async () => {
     if (syncingRef.current) return
     syncingRef.current = true
@@ -78,41 +123,8 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
       for (const table of pending) {
         const holding = table.items.some((item) => item.print_hold && !item.removed)
         if (holding && table.id === selectedTableIdRef.current) continue
-        const payload: FoodSyncPayload = {
-          device_id: getSocketId() || '',
-          source: 'pdv',
-          id: table.id,
-          companyId: company.id,
-          number: table.number,
-          status: table.status,
-          opened_at: table.opened_at,
-          closed_at: table.closed_at,
-          kind: table.kind ?? 'table',
-          customer_name: table.customer_name ?? null,
-          customer_phone: table.customer_phone ?? null,
-          delivery_address: table.delivery_address ?? null,
-          delivery_fee: table.delivery_fee ?? 0,
-          items: table.items.map(({ print_hold: _hold, ...item }) => item),
-          orders: table.orders,
-          partials: table.partials,
-          sales: table.sales,
-          audit: table.audit,
-        }
         try {
-          await syncTable(session.token.token, company.id, payload)
-          if (table.status === 'closed' || table.status === 'canceled') {
-            await deleteTable(table.id)
-          } else {
-            // Só marca como enviada se ninguém mexeu na mesa enquanto ia para o servidor.
-            const latest = (await getAllTables()).find((item) => item.id === table.id)
-            if (latest && latest.updatedAt === table.updatedAt) {
-              await putTable({
-                ...table,
-                synchronized: 'S',
-                items: table.items.map((item) => ({ ...item, print_hold: false, pending_print: false })),
-              })
-            }
-          }
+          await pushTable(table)
         } catch {
           // Fica pendente, tenta de novo no próximo ciclo.
         }
@@ -121,7 +133,17 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
     } finally {
       syncingRef.current = false
     }
-  }, [session.token.token, company.id, reloadFromDb])
+  }, [pushTable, reloadFromDb])
+
+  // "Enviar pedido": manda esta mesa agora e devolve o erro do servidor, se houver.
+  const sendTableNow = useCallback(
+    async (table: FoodTable) => {
+      const saved = await saveTableRef.current(table)
+      await pushTable(saved)
+      await reloadFromDb()
+    },
+    [pushTable, reloadFromDb]
+  )
 
   useEffect(() => {
     const interval = setInterval(() => void pushPending(), SYNC_INTERVAL_MS)
@@ -182,5 +204,7 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
     return updated
   }
 
-  return { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer: pullAndMerge, syncNow: pushPending }
+  saveTableRef.current = saveTable
+
+  return { tables, saveTable, setSelectedTableId, reloadFromDb, refreshFromServer: pullAndMerge, syncNow: pushPending, sendTableNow }
 }
