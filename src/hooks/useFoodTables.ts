@@ -168,8 +168,11 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
 
         // Mesa aberta na tela no momento: ignora, sem merge (mesmo
         // comportamento do Angular — evita sobrescrever edição em andamento).
-        // Os itens que chegaram de outro aparelho entram na tela sem mexer no resto.
+        // Os itens (e o nome) que chegaram de outro aparelho entram na tela sem mexer no resto.
         if (selectedTableIdRef.current === remote.id) {
+          if (local && arrived.length === 0 && (remote.customer_name ?? null) !== (local.customer_name ?? null)) {
+            void putTable({ ...local, customer_name: remote.customer_name ?? null }).then(reloadFromDb)
+          }
           if (local && arrived.length > 0) {
             const knownOrders = new Set(local.orders.map((order) => order.id))
             void putTable({
@@ -177,6 +180,7 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
               items: [...local.items, ...arrived],
               orders: [...local.orders, ...remote.orders.filter((order) => !knownOrders.has(order.id))],
               audit: [...local.audit, ...remote.audit.filter((entry) => !local.audit.some((mine) => mine.id === entry.id))],
+              customer_name: remote.customer_name ?? local.customer_name ?? null,
               status: 'open_with_items',
             }).then(reloadFromDb)
           }
