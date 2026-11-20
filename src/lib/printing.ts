@@ -302,6 +302,60 @@ export function buildTableBillDocument(data: {
   return { lines }
 }
 
+// Fechamento de caixa: o que entrou por forma de pagamento (sistema) contra o que
+// o operador contou, com a diferença. Sai ao fechar e pode ser reimpresso no histórico.
+export function buildCashRegisterClosingDocument(data: {
+  companyName: string
+  companyDocument?: string | null
+  code?: number | null
+  operatorName?: string | null
+  managerName?: string | null
+  openedAt?: string | null
+  closedAt?: string | null
+  openingAmount: number
+  expected: { name: string; amount: number }[]
+  declared: { name: string; amount: number }[]
+  expectedTotal: number
+  declaredTotal: number
+  difference: number
+  movementsCount: number
+  note?: string | null
+}): PrintDocument {
+  const lines: PrintLine[] = [{ t: 'text', v: data.companyName, align: 'center', bold: true }]
+  if (data.companyDocument) lines.push({ t: 'text', v: formatDocument(data.companyDocument), align: 'center' })
+  lines.push(
+    { t: 'text', v: `FECHAMENTO DE CAIXA${data.code ? ` Nº ${data.code}` : ''}`, align: 'center', bold: true },
+    { t: 'hr' },
+    { t: 'row', l: 'Operador', r: data.operatorName || '-' },
+    { t: 'row', l: 'Gerente', r: data.managerName || '-' },
+    { t: 'row', l: 'Abertura', r: data.openedAt ? dateTime(data.openedAt, false) : '-' },
+    { t: 'row', l: 'Fechamento', r: data.closedAt ? dateTime(data.closedAt, false) : '-' },
+    { t: 'row', l: 'Valor inicial (troco)', r: currency(data.openingAmount) },
+    { t: 'row', l: 'Movimentações', r: String(data.movementsCount) },
+    { t: 'hr' },
+    { t: 'text', v: 'SISTEMA (ESPERADO)', bold: true }
+  )
+  for (const item of data.expected) lines.push({ t: 'row', l: item.name, r: currency(item.amount) })
+  lines.push({ t: 'row', l: 'Total esperado', r: currency(data.expectedTotal), bold: true }, { t: 'hr' })
+  lines.push({ t: 'text', v: 'CONFERIDO PELO OPERADOR', bold: true })
+  for (const item of data.declared) lines.push({ t: 'row', l: item.name, r: currency(item.amount) })
+  lines.push({ t: 'row', l: 'Total conferido', r: currency(data.declaredTotal), bold: true }, { t: 'hr' })
+  const label = data.difference === 0 ? 'DIFERENÇA' : data.difference > 0 ? 'SOBRA' : 'FALTA'
+  lines.push({ t: 'row', l: label, r: currency(Math.abs(data.difference)), bold: true, size: 2 })
+  if (data.note) lines.push({ t: 'hr' }, { t: 'text', v: `Obs.: ${data.note}` })
+  lines.push(
+    { t: 'feed', n: 2 },
+    { t: 'text', v: '______________________________', align: 'center' },
+    { t: 'text', v: 'Operador', align: 'center' },
+    { t: 'feed', n: 2 },
+    { t: 'text', v: '______________________________', align: 'center' },
+    { t: 'text', v: 'Gerente', align: 'center' },
+    { t: 'feed', n: 3 },
+    { t: 'cut' }
+  )
+  return { lines }
+}
+
 // Reimprime o pedido da mesa nas impressoras de produção (cozinha, bar...).
 export function reprintProductionOrder(token: string, companyId: string, tableId: string) {
   return apiPost<{ jobs: number }>(`/production-printing/tables/${tableId}/reprint`, { companyId }, token)

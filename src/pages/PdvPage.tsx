@@ -12,6 +12,7 @@ import { TableGrid } from '../components/pdv/TableGrid'
 import { TableDetail } from '../components/pdv/TableDetail'
 import { PrintPreviewModal } from '../components/pdv/PrintPreviewModal'
 import { createPrintJob, reprintProductionOrder, type PrintDocument } from '../lib/printing'
+import { fetchCashRegisterStatus } from '../lib/cashRegister'
 import { fetchFoodMenu, loadCachedMenu, type FoodMenu } from '../lib/foodMenu'
 import { NewOrderAlert, type TableOrderAlert } from '../components/pdv/NewOrderAlert'
 import { TableInfoModal, type TableInfo } from '../components/pdv/TableInfoModal'
@@ -66,6 +67,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
   const justSynced = useRef(false)
   useProductAutoSync(session.token.token, company.id, syncStatus === 'ready', !justSynced.current)
   const [screen, setScreen] = useState<PdvScreen>(quickSaleOnlyMode ? 'quick-sale' : 'tables')
+  const [cashBlocked, setCashBlocked] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('catalog')
   // Venda em andamento no celular: a barra de navegação sai para dar lugar ao carrinho.
   const [saleActive, setSaleActive] = useState(false)
@@ -325,6 +327,21 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     }
   }
 
+  // Caixa ativo: receber ou fechar mesa/delivery só com o caixa do operador aberto
+  // (o servidor recusa a conta sem caixa e a mesa ficaria presa na sincronização).
+  // Sem internet deixa seguir: o servidor confere quando sincronizar.
+  async function ensureCashRegisterOpen(): Promise<boolean> {
+    if (!cashRegisterEnabled) return true
+    try {
+      const status = await fetchCashRegisterStatus(session.token.token, company.id)
+      if (!status.enabled || status.session) return true
+      setCashBlocked(true)
+      return false
+    } catch {
+      return true
+    }
+  }
+
   function exitTable() {
     setSelectedId(null)
     setSelectedTableId(null)
@@ -412,11 +429,43 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
     />
   )
 
+  const cashBlockedModal = cashBlocked && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-[var(--surface)] p-5 shadow-xl">
+        <p className="text-[15px] font-bold text-[var(--ink)]">Caixa fechado</p>
+        <p className="mt-1.5 text-[13px] text-[var(--ink-soft)]">
+          Abra o seu caixa antes de receber ou fechar a mesa. Os itens lançados continuam na mesa.
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setCashBlocked(false)}
+            className="rounded-xl border border-[var(--border)] py-2.5 text-[13px] font-semibold text-[var(--ink-soft)]"
+          >
+            Voltar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCashBlocked(false)
+              exitTable()
+              setScreen('cash-register')
+            }}
+            className="rounded-xl bg-[var(--blue-500)] py-2.5 text-[13px] font-bold text-white"
+          >
+            Abrir caixa
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   if (selectedTable) {
     return (
       <>
       {tablePreviewModal}
       {orderAlertBanner}
+      {cashBlockedModal}
       <TableDetail
         table={selectedTable}
         authorId={myPerson?.id ?? ''}
@@ -434,6 +483,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         acquirerStorageKey={`c2_pdv_card_acquirer_${company.id}`}
         menu={foodMenu}
         idleAlertMinutes={idleAlertMinutes}
+        onBeforeReceive={ensureCashRegisterOpen}
       />
       </>
     )
@@ -558,7 +608,7 @@ export function PdvPage({ session, company, onCompanyUpdate }: PdvPageProps) {
         ) : screen === 'nfse' ? (
           <NfseListPage session={session} company={company} />
         ) : screen === 'cash-register' ? (
-          <CashRegisterPage session={session} company={company} />
+          <CashRegisterPage session={session} company={company} onPrint={printTableDocument} />
         ) : (
           <TableGrid
             tables={tables}
