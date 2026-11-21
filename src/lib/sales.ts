@@ -40,6 +40,8 @@ export interface CreateSalePayload {
   payment_terms: number
   products: SaleProductPayload[]
   plots: SalePlotPayload[]
+  // Senha do administrador para liberar o crediário (quando ativada nos Ajustes)
+  credit_password?: string
 }
 
 export interface SaleRecord {

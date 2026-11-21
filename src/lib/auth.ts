@@ -21,6 +21,10 @@ export interface ConfigRecord {
   id: string
   // Mesas: minutos sem pedir até alertar (0 = desligado)
   food_table_idle_alert_minutes?: number | null
+  // Crediário no PDV
+  credit_sale_enabled?: boolean
+  credit_sale_password_required?: boolean
+  credit_sale_password_set?: boolean
   quick_sale_enabled?: boolean
   quick_sale_only_mode?: boolean
   quick_sale_ask_print_preview?: boolean

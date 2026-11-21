@@ -18,6 +18,8 @@ import {
   type PaymentDetails,
 } from '../components/pdv/PaymentDetailsFields'
 import { PrintHistoryModal } from '../components/pdv/PrintHistoryModal'
+import { CreditSaleModal, type CreditSaleChoice } from '../components/pdv/CreditSaleModal'
+import { CREDIT_FORM_PAYMENT, creditDueDates, splitInstallments } from '../lib/credit'
 import { QuickClientCreate } from '../components/pdv/QuickClientCreate'
 import { QuickProductCreate } from '../components/pdv/QuickProductCreate'
 import { ProductKindTag } from '../components/pdv/ProductKindTag'
@@ -118,6 +120,8 @@ interface PaymentLine {
   amount: number
   // Dinheiro entregue pelo cliente (maior que o valor cobrado quando há troco).
   received?: number
+  // Crediário: quantas parcelas e o 1º vencimento (as parcelas viram contas a receber em aberto)
+  credit?: { installments: number; firstDue: string }
   // Bandeira, autorização e CNPJ da operadora digitados à mão (cartão sem TEF) ou ID do PIX.
   card_brand?: string
   payment_authorization?: string
@@ -154,6 +158,9 @@ const PAYMENT_METHODS = [
   { key: 'P', form_payment: 10, name: 'PIX', icon: QrCodeIcon },
 ]
 
+// Crediário (aparece quando ativado nos Ajustes): a venda vira parcelas a receber do cliente.
+const CREDIT_METHOD = { key: 'R', form_payment: CREDIT_FORM_PAYMENT, name: 'Crediário', icon: UserIcon }
+
 function parseAmountInput(value: string): number {
   const normalized = value.replace(/\./g, '').replace(',', '.')
   const num = Number(normalized)
@@ -172,6 +179,11 @@ export function QuickSalePage({
   const isMobile = useIsMobile()
   const myPerson = useMyCompanyPerson(session, company)
   const config = company.config
+  const creditEnabled = Boolean(config?.credit_sale_enabled)
+  const paymentMethods = creditEnabled ? [...PAYMENT_METHODS, CREDIT_METHOD] : PAYMENT_METHODS
+  // Valor que vai para o crediário (abre a janela de cliente/limite/parcelas/senha)
+  const [creditFor, setCreditFor] = useState<{ amount: number; finish: boolean } | null>(null)
+  const [creditPassword, setCreditPassword] = useState('')
 
   const [phase, setPhase] = useState<Phase>('checking')
   const [blockedMessage, setBlockedMessage] = useState('')
@@ -763,7 +775,11 @@ export function QuickSalePage({
   function addPaymentLine() {
     const amount = parseAmountInput(paymentAmountInput)
     if (!amount || amount <= 0) return
-    const method = PAYMENT_METHODS[paymentMethodIndex]
+    const method = paymentMethods[paymentMethodIndex]
+    if (method.form_payment === CREDIT_FORM_PAYMENT) {
+      setCreditFor({ amount: Math.min(amount, remaining), finish: false })
+      return
+    }
     setPayments((prev) => [
       ...prev,
       { form_payment: method.form_payment, name: method.name, amount, ...paymentDetailsPayload(method.form_payment, paymentDetails) },
@@ -956,7 +972,11 @@ export function QuickSalePage({
   // `lines` vem pronto na cobrança em um toque do celular; sem ele vale a lista montada na tela de pagamento.
   // Celular: tocar na forma de pagamento já quita o total e registra a venda.
   function payFull(methodIndex: number, received?: number) {
-    const method = PAYMENT_METHODS[methodIndex]
+    const method = paymentMethods[methodIndex]
+    if (method.form_payment === CREDIT_FORM_PAYMENT) {
+      setCreditFor({ amount: total, finish: true })
+      return
+    }
     const line: PaymentLine = { form_payment: method.form_payment, name: method.name, amount: total, received }
     setPayments([line])
     void confirmFinalSale([line])
@@ -1000,7 +1020,29 @@ export function QuickSalePage({
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noreferrer')
   }
 
-  async function confirmFinalSale(lines: PaymentLine[] = payments) {
+  function confirmCredit(choice: CreditSaleChoice) {
+    if (!creditFor) return
+    const line: PaymentLine = {
+      form_payment: CREDIT_FORM_PAYMENT,
+      name: `Crediário ${choice.installments}x · 1º venc. ${choice.firstDue.split('-').reverse().join('/')}`,
+      amount: round2(creditFor.amount),
+      credit: { installments: choice.installments, firstDue: choice.firstDue },
+    }
+    setCreditPassword(choice.password)
+    setCreditFor(null)
+    if (creditFor.finish) {
+      setPayments([line])
+      void confirmFinalSale([line], choice.password)
+      return
+    }
+    const next = [...payments, line]
+    setPayments(next)
+    const left = Math.max(0, round2(total - next.reduce((sum, item) => sum + item.amount, 0)))
+    setPaymentAmountInput(left ? String(left.toFixed(2)).replace('.', ',') : '')
+    setTimeout(() => paymentAmountRef.current?.select(), 0)
+  }
+
+  async function confirmFinalSale(lines: PaymentLine[] = payments, creditPasswordOverride?: string) {
     const linesPaid = round2(lines.reduce((sum, line) => sum + line.amount, 0))
     if (lines.length === 0 || linesPaid < total) return
     if (!myPerson) {
@@ -1023,19 +1065,38 @@ export function QuickSalePage({
       subtotal: itemTotal(item),
     }))
 
-    const plots: SalePlotPayload[] = lines.map((payment, index) => ({
-      portion: index + 1,
-      form_payment: payment.form_payment,
-      date_due: now.toISOString().slice(0, 10),
-      amount: payment.amount,
-      bill_value: payment.amount,
-      change: index === lines.length - 1 ? change : 0,
-      note: payment.name,
-      status: 1,
-      card_brand: payment.card_brand,
-      payment_authorization: payment.payment_authorization,
-      card_acquirer_cnpj: payment.card_acquirer_cnpj,
-    }))
+    // Crediário vira várias parcelas em aberto (uma por vencimento); o resto entra pago na hora.
+    const plots: SalePlotPayload[] = lines
+      .flatMap((payment, index) => {
+        if (payment.credit) {
+          const values = splitInstallments(payment.amount, payment.credit.installments)
+          const dates = creditDueDates(payment.credit.firstDue, payment.credit.installments)
+          return values.map((value, part) => ({
+            form_payment: payment.form_payment,
+            date_due: dates[part],
+            amount: value,
+            bill_value: 0,
+            change: 0,
+            note: `Crediário ${part + 1}/${payment.credit!.installments}`,
+            status: 0,
+          }))
+        }
+        return [
+          {
+            form_payment: payment.form_payment,
+            date_due: now.toISOString().slice(0, 10),
+            amount: payment.amount,
+            bill_value: payment.amount,
+            change: index === lines.length - 1 ? change : 0,
+            note: payment.name,
+            status: 1,
+            card_brand: payment.card_brand,
+            payment_authorization: payment.payment_authorization,
+            card_acquirer_cnpj: payment.card_acquirer_cnpj,
+          },
+        ]
+      })
+      .map((plot, index) => ({ ...plot, portion: index + 1 }))
 
     try {
       const sale = await createSale(session.token.token, {
@@ -1052,9 +1113,10 @@ export function QuickSalePage({
         note: 'Venda Rápida',
         consumer_document: consumerDocument || undefined,
         form_payment: lines[0]?.form_payment ?? 9,
-        payment_terms: Math.max(lines.length - 1, 0),
+        payment_terms: Math.max(plots.length - 1, 0),
         products,
         plots,
+        credit_password: lines.some((line) => line.credit) ? creditPasswordOverride ?? creditPassword : undefined,
       })
 
       const receiptData: ReceiptData = {
@@ -1824,7 +1886,7 @@ export function QuickSalePage({
           <>
             <p className="mt-3 text-center text-[13px] font-semibold text-[var(--ink-soft)]">Toque na forma de pagamento para finalizar</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
-              {PAYMENT_METHODS.map((method, index) => {
+              {paymentMethods.map((method, index) => {
                 const MethodIcon = method.icon
                 return (
                   <button
@@ -1915,8 +1977,8 @@ export function QuickSalePage({
           </>
         ) : (
           <>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {PAYMENT_METHODS.map((method, index) => (
+            <div className={`mt-3 grid gap-2 ${paymentMethods.length > 4 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+              {paymentMethods.map((method, index) => (
                 <button
                   key={method.key}
                   type="button"
@@ -1957,7 +2019,7 @@ export function QuickSalePage({
               </button>
             </div>
             <PaymentDetailsFields
-              formPayment={PAYMENT_METHODS[paymentMethodIndex].form_payment}
+              formPayment={paymentMethods[paymentMethodIndex].form_payment}
               value={paymentDetails}
               onChange={setPaymentDetails}
               onEnter={addPaymentLine}
@@ -2545,6 +2607,19 @@ export function QuickSalePage({
 
       {mobilePaymentSheet}
 
+      {creditFor && (
+        <CreditSaleModal
+          token={session.token.token}
+          companyId={company.id}
+          amount={creditFor.amount}
+          client={client}
+          passwordRequired={Boolean(config?.credit_sale_password_required)}
+          onPickClient={(person) => setClient(person)}
+          onClose={() => setCreditFor(null)}
+          onConfirm={confirmCredit}
+        />
+      )}
+
       {modal === 'payment' && !isMobile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] p-5 shadow-xl">
@@ -2563,8 +2638,8 @@ export function QuickSalePage({
               </div>
             </div>
 
-            <div className="mb-3 grid grid-cols-4 gap-2">
-              {PAYMENT_METHODS.map((method, index) => {
+            <div className={`mb-3 grid gap-2 ${paymentMethods.length > 4 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+              {paymentMethods.map((method, index) => {
                 const MethodIcon = method.icon
                 return (
                   <button
@@ -2594,13 +2669,13 @@ export function QuickSalePage({
               onChange={(e) => setPaymentAmountInput(e.target.value.replace(/[^\d,]/g, ''))}
               onKeyDown={(e) => {
                 const key = e.key.toUpperCase()
-                const shortcut = PAYMENT_METHODS.findIndex((m) => m.key === key)
+                const shortcut = paymentMethods.findIndex((m) => m.key === key)
                 if (shortcut >= 0) {
                   e.preventDefault()
                   setPaymentMethodIndex(shortcut)
                 } else if (e.key === 'ArrowRight') {
                   e.preventDefault()
-                  setPaymentMethodIndex((prev) => Math.min(prev + 1, PAYMENT_METHODS.length - 1))
+                  setPaymentMethodIndex((prev) => Math.min(prev + 1, paymentMethods.length - 1))
                 } else if (e.key === 'ArrowLeft') {
                   e.preventDefault()
                   setPaymentMethodIndex((prev) => Math.max(prev - 1, 0))
@@ -2624,7 +2699,7 @@ export function QuickSalePage({
               ← → troca a forma · Enter adiciona · Delete remove última · F4 confirma
             </p>
             <PaymentDetailsFields
-              formPayment={PAYMENT_METHODS[paymentMethodIndex].form_payment}
+              formPayment={paymentMethods[paymentMethodIndex].form_payment}
               value={paymentDetails}
               onChange={setPaymentDetails}
               onEnter={addPaymentLine}

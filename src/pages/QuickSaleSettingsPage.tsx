@@ -2,6 +2,7 @@ import { Select } from '../components/form/Select'
 import { useEffect, useState } from 'react'
 import { updateConfig } from '../lib/config'
 import { fetchActivePrinters, type PrinterOption } from '../lib/printing'
+import { setCreditPassword } from '../lib/credit'
 import { ApiError } from '../lib/api'
 import type { NfceMode } from '../lib/nfce'
 import { parseScaleLabel, scaleFormatLength, type ScaleConfig } from '../lib/scale'
@@ -57,6 +58,27 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
   const [scaleSample, setScaleSample] = useState('')
   const [tokensEnabled, setTokensEnabled] = useState(config?.sale_tokens_enabled !== false)
   const [idleMinutes, setIdleMinutes] = useState(String(config?.food_table_idle_alert_minutes ?? 30))
+  const [creditEnabled, setCreditEnabled] = useState(Boolean(config?.credit_sale_enabled))
+  const [creditPasswordRequired, setCreditPasswordRequired] = useState(Boolean(config?.credit_sale_password_required))
+  const [creditPasswordSet, setCreditPasswordSet] = useState(Boolean(config?.credit_sale_password_set))
+  const [creditPassword, setCreditPasswordInput] = useState('')
+  const [creditPasswordNotice, setCreditPasswordNotice] = useState<string | null>(null)
+
+  async function saveCreditPassword() {
+    if (creditPassword.length < 4) {
+      setCreditPasswordNotice('A senha precisa ter pelo menos 4 caracteres.')
+      return
+    }
+    try {
+      await setCreditPassword(session.token.token, company.id, creditPassword)
+      setCreditPasswordSet(true)
+      setCreditPasswordInput('')
+      setCreditPasswordNotice('Senha do crediário salva.')
+      onCompanyUpdate({ ...company, config: config ? { ...config, credit_sale_password_set: true } : config })
+    } catch (err) {
+      setCreditPasswordNotice(err instanceof ApiError ? err.message : 'Não foi possível salvar a senha.')
+    }
+  }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -109,6 +131,8 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
         scale_value_type: scaleValueType,
         sale_tokens_enabled: tokensEnabled,
         food_table_idle_alert_minutes: Math.min(600, Math.max(0, Number(idleMinutes) || 0)),
+        credit_sale_enabled: creditEnabled,
+        credit_sale_password_required: creditEnabled ? creditPasswordRequired : false,
       })
       onCompanyUpdate({ ...company, config: { ...config, ...updated } })
       setSaved(true)
@@ -446,6 +470,57 @@ export function QuickSaleSettingsPage({ session, company, onBack, onCompanyUpdat
               Folha A4
             </button>
           </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[13.5px] font-semibold text-[var(--ink)]">Ativar controle de crediário</p>
+              <p className="mt-0.5 text-[12px] text-[var(--ink-soft)]">
+                Aparece a forma "Crediário" na finalização da venda. Exige escolher o cliente e respeita o limite de crédito do cadastro dele;
+                as parcelas viram contas a receber.
+              </p>
+            </div>
+            <Toggle checked={creditEnabled} onChange={setCreditEnabled} />
+          </div>
+          {creditEnabled && (
+            <div className="mt-4 border-t border-[var(--border)] pt-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[13.5px] font-semibold text-[var(--ink)]">Ativar senha de administração para venda no crediário</p>
+                  <p className="mt-0.5 text-[12px] text-[var(--ink-soft)]">O caixa só finaliza no crediário com a senha.</p>
+                </div>
+                <Toggle checked={creditPasswordRequired} onChange={setCreditPasswordRequired} />
+              </div>
+              {creditPasswordRequired && (
+                <div className="mt-3">
+                  <p className="text-[12px] font-semibold text-[var(--ink-soft)]">
+                    {creditPasswordSet ? 'Senha cadastrada. Para trocar, digite a nova:' : 'Cadastre a senha do crediário:'}
+                  </p>
+                  <div className="mt-1.5 flex gap-2">
+                    <input
+                      type="password"
+                      value={creditPassword}
+                      onChange={(event) => setCreditPasswordInput(event.target.value)}
+                      placeholder="Mínimo 4 caracteres"
+                      className="w-48 rounded-xl border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-[14px] text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--blue-300)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveCreditPassword()}
+                      className="rounded-xl bg-[var(--blue-100)] px-3.5 py-2 text-[13px] font-bold text-[var(--blue-700)]"
+                    >
+                      Salvar senha
+                    </button>
+                  </div>
+                  {creditPasswordNotice && <p className="mt-1.5 text-[12px] font-medium text-[var(--ink-soft)]">{creditPasswordNotice}</p>}
+                </div>
+              )}
+              <p className="mt-3 text-[12px] text-[var(--ink-soft)]">
+                O limite de crédito de cada cliente fica no cadastro de pessoas (painel). Depois de mudar, clique em Salvar no fim desta tela.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
