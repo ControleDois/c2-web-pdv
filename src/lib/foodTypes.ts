@@ -140,6 +140,8 @@ export interface FoodTable extends FoodBaseLocal {
   customer_phone?: string | null
   delivery_address?: string | null
   delivery_fee?: number
+  // Motivo da última recusa do servidor ao sincronizar (só local; limpa quando passa).
+  sync_error?: string | null
 }
 
 export const DELIVERY_TABLE_MIN = 9000

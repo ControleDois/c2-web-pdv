@@ -45,6 +45,11 @@ export const FORM_PAYMENT_LABELS: Record<number, string> = {
   16: 'Vale Refeição',
 }
 
+// Caixas do período (abertos e fechados), mais recente primeiro.
+export function fetchCashRegisterSessions(token: string, companyId: string, dateStart: string, dateEnd: string) {
+  return apiGet<CashRegisterSessionRecord[]>('/cash-register-session', { companyId, dateStart, dateEnd }, token)
+}
+
 export function fetchCashRegisterStatus(token: string, companyId: string) {
   return apiGet<CashRegisterStatus>('/cash-register-session/current', { companyId }, token)
 }

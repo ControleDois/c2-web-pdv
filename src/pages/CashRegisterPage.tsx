@@ -3,23 +3,39 @@ import { useEffect, useState } from 'react'
 import {
   fetchCashRegisterStatus,
   fetchCashRegisterMovements,
+  fetchCashRegisterSessions,
   openCashRegister,
   closeCashRegister,
   FORM_PAYMENT_LABELS,
   type CashRegisterStatus,
   type CashRegisterMovementSummary,
+  type CashRegisterSessionRecord,
 } from '../lib/cashRegister'
 import { fetchPeopleByRole, type PersonRecord } from '../lib/people'
 import { useMyCompanyPerson } from '../hooks/useMyCompanyPerson'
 import { ApiError } from '../lib/api'
 import { formatCurrency } from '../lib/format'
-import { WalletIcon, LockIcon, CheckCircleIcon } from '../components/icons'
+import { buildCashRegisterClosingDocument, type PrintDocument } from '../lib/printing'
+import { WalletIcon, LockIcon, CheckCircleIcon, PrinterIcon } from '../components/icons'
 import type { AuthSession, AuthCompany } from '../lib/auth'
 
 interface CashRegisterPageProps {
   session: AuthSession
   company: AuthCompany
+  // Impressora de cupom do terminal (ou prévia na tela, sem impressora).
+  onPrint?: (title: string, document: PrintDocument) => Promise<void>
 }
+
+const HISTORY_DAYS = 30
+
+function localDate(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+const numberOf = (value: unknown) => Number(value ?? 0) || 0
+const textOf = (value: unknown) => (typeof value === 'string' && value ? value : null)
+const paymentLabel = (method: number) => FORM_PAYMENT_LABELS[method] ?? `Forma ${method}`
 
 function formatDateTime(iso?: string | null): string {
   if (!iso) return '—'
@@ -47,7 +63,11 @@ function AmountInput({ value, onChange }: { value: string; onChange: (value: str
 // idêntico ao que o backend espera: gerente (role 6) + operador (role 7)
 // confirmam com a própria senha de login pra abrir, e a mesma dupla confirma
 // de novo (só senha, sem escolher de novo) pra fechar com a conferência.
-export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
+//
+// O operador é sempre quem está logado neste PDV: as vendas procuram o caixa
+// aberto do usuário logado, então um caixa aberto em nome de outra pessoa
+// deixaria as vendas daqui recusadas.
+export function CashRegisterPage({ session, company, onPrint }: CashRegisterPageProps) {
   const token = session.token.token
   const myPerson = useMyCompanyPerson(session, company)
 
@@ -58,11 +78,12 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
   const [mode, setMode] = useState<'view' | 'open' | 'close'>('view')
 
   const [managers, setManagers] = useState<PersonRecord[]>([])
-  const [operators, setOperators] = useState<PersonRecord[]>([])
+  const [history, setHistory] = useState<CashRegisterSessionRecord[]>([])
+  const [printingId, setPrintingId] = useState<string | null>(null)
+  const [printError, setPrintError] = useState<string | null>(null)
 
   const [managerId, setManagerId] = useState('')
   const [managerPassword, setManagerPassword] = useState('')
-  const [operatorId, setOperatorId] = useState('')
   const [operatorPassword, setOperatorPassword] = useState('')
   const [openingAmount, setOpeningAmount] = useState('0')
   const [note, setNote] = useState('')
@@ -84,6 +105,45 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Não foi possível carregar o caixa.'))
       .finally(() => setLoading(false))
+    const start = new Date()
+    start.setDate(start.getDate() - HISTORY_DAYS)
+    fetchCashRegisterSessions(token, company.id, localDate(start), localDate(new Date()))
+      .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
+      .catch(() => setHistory([]))
+  }
+
+  async function printClosing(sessionId: string) {
+    if (!onPrint) return
+    setPrintingId(sessionId)
+    setPrintError(null)
+    try {
+      const details = await fetchCashRegisterMovements(token, sessionId)
+      const closed = details.session
+      await onPrint(
+        `Fechamento de caixa ${closed.code ?? ''}`.trim(),
+        buildCashRegisterClosingDocument({
+          companyName: company.people?.name || 'Controle Dois',
+          companyDocument: company.people?.document,
+          code: closed.code ?? null,
+          operatorName: closed.operator?.name,
+          managerName: closed.manager?.name,
+          openedAt: textOf(closed.opened_at ?? closed.openedAt),
+          closedAt: textOf(closed.closed_at ?? closed.closedAt),
+          openingAmount: numberOf(closed.opening_amount ?? closed.openingAmount),
+          expected: details.movements.byPayment.map((item) => ({ name: paymentLabel(item.formPayment), amount: item.amount })),
+          declared: details.closingPayments.map((item) => ({ name: paymentLabel(item.formPayment), amount: item.amount })),
+          expectedTotal: details.comparison.expectedAmount,
+          declaredTotal: details.comparison.declaredAmount,
+          difference: details.comparison.differenceAmount,
+          movementsCount: details.movements.bills.length,
+          note: textOf(closed.note),
+        })
+      )
+    } catch (err) {
+      setPrintError(err instanceof ApiError ? err.message : 'Não foi possível imprimir o fechamento.')
+    } finally {
+      setPrintingId(null)
+    }
   }
 
   useEffect(() => {
@@ -95,16 +155,12 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
     setFormError(null)
     setManagerId('')
     setManagerPassword('')
-    setOperatorId(myPerson?.id ?? '')
     setOperatorPassword('')
     setOpeningAmount('0')
     setNote('')
     setMode('open')
     if (!managers.length) {
       fetchPeopleByRole(token, company.id, 6).then(setManagers).catch(() => undefined)
-    }
-    if (!operators.length) {
-      fetchPeopleByRole(token, company.id, 7).then(setOperators).catch(() => undefined)
     }
   }
 
@@ -125,8 +181,13 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
   }
 
   async function handleOpenSubmit() {
-    if (!managerId || !managerPassword || !operatorId || !operatorPassword) {
-      setFormError('Preencha gerente, operador e as duas senhas.')
+    const operatorId = myPerson?.id
+    if (!operatorId) {
+      setFormError('Seu usuário não está cadastrado como pessoa desta empresa. Peça ao gerente para vincular.')
+      return
+    }
+    if (!managerId || !managerPassword || !operatorPassword) {
+      setFormError('Preencha o gerente e as duas senhas.')
       return
     }
     setSaving(true)
@@ -158,8 +219,9 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
     }
     setSaving(true)
     setFormError(null)
+    const closingId = status.session.id
     try {
-      await closeCashRegister(token, status.session.id, {
+      await closeCashRegister(token, closingId, {
         managerPassword,
         operatorPassword,
         closingPayments: Object.entries(closingPayments)
@@ -169,6 +231,7 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
       })
       setMode('view')
       load()
+      void printClosing(closingId)
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Não foi possível fechar o caixa.')
     } finally {
@@ -229,17 +292,15 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
 
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="mb-1 text-[12.5px] font-bold text-[var(--ink)]">Operador</p>
-            <Select value={operatorId} onChange={setOperatorId} placeholder="Selecione o operador">
-              <option value="">Selecione…</option>
-              {operators.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name}
-                </option>
-              ))}
-            </Select>
+            <p className="rounded-lg bg-[var(--page)] px-3 py-2 text-[13px] font-semibold text-[var(--ink)]">
+              {myPerson?.name ?? 'Carregando seu usuário…'}
+            </p>
+            <p className="mt-1 text-[11.5px] text-[var(--ink-soft)]">
+              O caixa fica no seu nome: as vendas deste PDV entram nele e só fecha com a sua senha.
+            </p>
             <input
               type="password"
-              placeholder="Senha do operador"
+              placeholder="Sua senha (operador)"
               value={operatorPassword}
               onChange={(event) => setOperatorPassword(event.target.value)}
               className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--page)] px-3 py-2 text-[13px] text-[var(--ink)] outline-none focus:border-[var(--blue-500)]"
@@ -419,6 +480,70 @@ export function CashRegisterPage({ session, company }: CashRegisterPageProps) {
           >
             Abrir caixa
           </button>
+        </div>
+      )}
+
+      {mode === 'view' && status?.enabled && (
+        <div className="mt-6 max-w-2xl">
+          <div className="mb-2 flex items-baseline justify-between">
+            <h2 className="text-[14px] font-bold text-[var(--ink)]">Caixas dos últimos {HISTORY_DAYS} dias</h2>
+            <span className="text-[11.5px] text-[var(--ink-soft)]">{history.length} caixa(s)</span>
+          </div>
+          {printError && (
+            <p className="mb-2 rounded-xl bg-[var(--red-100)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--red-500)]">
+              {printError}
+            </p>
+          )}
+          {history.length === 0 ? (
+            <p className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-[12.5px] text-[var(--ink-soft)]">
+              Nenhum caixa no período.
+            </p>
+          ) : (
+            <div className="flex flex-col divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+              {history.map((row) => {
+                const closed = numberOf(row.status) === 1
+                const difference = numberOf(row.difference_amount ?? row.differenceAmount)
+                return (
+                  <div key={row.id} className="flex items-center gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-bold text-[var(--ink)]">
+                        Nº {row.code ?? '—'} · {row.operator?.name ?? '—'}
+                      </p>
+                      <p className="text-[11.5px] text-[var(--ink-soft)]">
+                        {formatDateTime(textOf(row.opened_at ?? row.openedAt))} →{' '}
+                        {closed ? formatDateTime(textOf(row.closed_at ?? row.closedAt)) : 'aberto'}
+                      </p>
+                    </div>
+                    {closed ? (
+                      <div className="text-right">
+                        <p className="text-[12.5px] font-bold text-[var(--ink)]">
+                          {formatCurrency(numberOf(row.expected_amount ?? row.expectedAmount))}
+                        </p>
+                        <p
+                          className={`text-[11.5px] font-semibold ${difference === 0 ? 'text-[var(--ink-soft)]' : difference > 0 ? 'text-[var(--green-600)]' : 'text-[var(--red-500)]'}`}
+                        >
+                          {difference === 0 ? 'Sem diferença' : `${difference > 0 ? 'Sobra' : 'Falta'} ${formatCurrency(Math.abs(difference))}`}
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="rounded-full bg-[var(--green-100)] px-2.5 py-1 text-[11px] font-bold text-[var(--green-600)]">Aberto</span>
+                    )}
+                    {closed && onPrint && (
+                      <button
+                        type="button"
+                        title="Imprimir fechamento"
+                        onClick={() => void printClosing(row.id)}
+                        disabled={printingId === row.id}
+                        className="flex h-9 w-9 flex-none items-center justify-center rounded-xl border border-[var(--border)] text-[var(--ink-soft)] hover:text-[var(--ink)] disabled:opacity-50"
+                      >
+                        <PrinterIcon className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

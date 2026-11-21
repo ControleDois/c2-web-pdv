@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAllTables, putTable, deleteTable } from '../lib/db'
 import { syncTable, pullTables, normalizeRemoteTable, type FoodSyncPayload } from '../lib/foodApi'
+import { ApiError } from '../lib/api'
 import { connectSocket, getSocketId } from '../lib/socket'
 import type { FoodTable, FoodTableItem } from '../lib/foodTypes'
 import type { AuthSession, AuthCompany } from '../lib/auth'
@@ -105,6 +106,7 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
         await putTable({
           ...table,
           synchronized: 'S',
+          sync_error: null,
           items: table.items.map((item) => ({ ...item, print_hold: false, pending_print: false })),
         })
       }
@@ -125,8 +127,16 @@ export function useFoodTables(session: AuthSession, company: AuthCompany, onNewI
         if (holding && table.id === selectedTableIdRef.current) continue
         try {
           await pushTable(table)
-        } catch {
-          // Fica pendente, tenta de novo no próximo ciclo.
+        } catch (err) {
+          // Fica pendente e tenta de novo no próximo ciclo. Recusa do servidor (ex.: controle de
+          // caixa sem caixa aberto) fica guardada para o PDV mostrar: a mesa fechada aqui
+          // continuaria aberta no servidor e no app do garçom sem ninguém saber por quê.
+          if (err instanceof ApiError) {
+            const latest = (await getAllTables()).find((item) => item.id === table.id)
+            if (latest && latest.updatedAt === table.updatedAt && latest.sync_error !== err.message) {
+              await putTable({ ...latest, sync_error: err.message })
+            }
+          }
         }
       }
       await reloadFromDb()

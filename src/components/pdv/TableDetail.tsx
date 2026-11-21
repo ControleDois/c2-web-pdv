@@ -33,6 +33,8 @@ interface TableDetailProps {
   menu: FoodMenu | null
   // Minutos sem pedir até a mesa entrar em alerta (0 = desligado)
   idleAlertMinutes: number
+  // Antes de receber ou fechar: false cancela (ex.: controle de caixa ativo e caixa fechado).
+  onBeforeReceive?: () => Promise<boolean>
 }
 
 
@@ -105,6 +107,7 @@ export function TableDetail({
   acquirerStorageKey,
   menu,
   idleAlertMinutes,
+  onBeforeReceive,
 }: TableDetailProps) {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
@@ -538,6 +541,7 @@ export function TableDetail({
   }
 
   async function handleCloseTable() {
+    if (items.length > 0 && onBeforeReceive && !(await onBeforeReceive())) return
     if (items.length > 0 && table.sales.length === 0 && receiveTotal > 0) {
       openReceiveTotal()
       return
@@ -913,7 +917,10 @@ export function TableDetail({
             <button
               type="button"
               disabled={chosenToPay.length === 0}
-              onClick={() => setReceiveItemsOpen(true)}
+              onClick={async () => {
+                if (onBeforeReceive && !(await onBeforeReceive())) return
+                setReceiveItemsOpen(true)
+              }}
               className="rounded-xl bg-[var(--blue-500)] py-3 text-[14px] font-bold text-white disabled:opacity-45"
             >
               Receber {formatCurrency(chosenTotal)}
