@@ -17,6 +17,12 @@ export function fetchMyPerson(token: string, companyId: string) {
 
 // Busca de cliente pra venda rápida - direto na API (o PDV não tem uma base
 // local de pessoas como tem de produtos, e a venda rápida já vai online).
+// Qualquer pessoa do cadastro (nome, razão social, CPF/CNPJ, telefone, e-mail ou código),
+// sem exigir o papel de cliente - usada no crediário.
+export function searchAnyPeople(token: string, companyId: string, search: string) {
+  return apiGet<Paginated<PersonRecord>>('/people', { companyId, search, limit: '10' }, token).then((res) => res.data)
+}
+
 export function searchPeople(token: string, companyId: string, search: string) {
   return apiGet<Paginated<PersonRecord>>(
     '/people',

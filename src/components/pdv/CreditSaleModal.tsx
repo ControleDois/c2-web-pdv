@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError } from '../../lib/api'
 import { checkCreditSale, creditDueDates, fetchCreditUsage, splitInstallments, type CreditUsage } from '../../lib/credit'
 import { formatCurrency } from '../../lib/format'
-import { searchPeople, type PersonRecord } from '../../lib/people'
+import { searchAnyPeople, type PersonRecord } from '../../lib/people'
 import { CloseIcon, SearchIcon } from '../icons'
 
 export interface CreditSaleChoice {
@@ -58,7 +58,7 @@ export function CreditSaleModal({ token, companyId, amount, client, passwordRequ
       return
     }
     const timer = setTimeout(() => {
-      searchPeople(token, companyId, query.trim())
+      searchAnyPeople(token, companyId, query.trim())
         .then(setResults)
         .catch(() => setResults([]))
     }, 250)
@@ -151,7 +151,7 @@ export function CreditSaleModal({ token, companyId, amount, client, passwordRequ
                   autoFocus
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Buscar cliente pelo nome, CPF ou telefone"
+                  placeholder="Nome, razão social, CPF/CNPJ, telefone ou código"
                   className="w-full bg-transparent text-[14px] text-[var(--ink)] placeholder:text-[var(--muted)] focus:outline-none"
                 />
               </div>
@@ -165,6 +165,11 @@ export function CreditSaleModal({ token, companyId, amount, client, passwordRequ
                       className="block w-full border-b border-[var(--border)] px-3.5 py-2.5 text-left text-[13.5px] font-semibold text-[var(--ink)] last:border-0 hover:bg-[var(--blue-100)]"
                     >
                       {person.name}
+                      {person.document && (
+                        <span className="ml-2 text-[12px] font-normal text-[var(--muted)]">
+                          {person.document}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
